@@ -659,6 +659,7 @@ final class Parser:
         if polymorphic.contains(name) then symbolSort(instance(name, Nil, None))
         else throw Smt2Error(s"unknown symbol $name")
       )
+    case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: _ :: Nil) if constantArray(s, env) => sort(s)
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => symbolSort(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       resultSort(instance(name, args.map(sortOf(_, env)), Some(sort(s))), args.length)
@@ -879,6 +880,8 @@ final class Parser:
           macros.get(concrete).map(_._1.length).orElse(functions.get(concrete).flatMap(_.arrow).map(_._1.length))
         params.filter(_ > 0).foreach(n => throw Smt2Error(s"$name expects $n arguments"))
       Term.Const(concrete)
+    case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: v :: Nil) if constantArray(s, env) =>
+      Term.ConstArray(sort(s), term(v, env))
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => Term.Const(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       Term.App(Term.Const(instance(name, args.map(sortOf(_, env)), Some(sort(s)))), args.map(term(_, env)))
@@ -921,6 +924,16 @@ final class Parser:
   private def selectable(a: SExpr, env: Map[String, Sort]): Boolean = sortOf(a, env) match
     case Sort.Array(_, _) => true
     case _ => false
+
+  /** Whether `(as const s)` is the constant array of the theory: `s` an array
+   *  sort, and `const` not a symbol of the script's (a constructor `const` of a
+   *  parametric datatype is qualified the same way).
+   */
+  private def constantArray(s: SExpr, env: Map[String, Sort]): Boolean =
+    !env.contains("const") && !functions.contains("const") && !macros.contains("const") &&
+      !polymorphic.contains("const") && (s match
+        case SList(SSymbol("Array") :: _) => true
+        case _ => false)
 
   /** Checks that `name` is declared, bound or a macro. */
   private def declared(name: String, env: Map[String, Sort]): Unit =

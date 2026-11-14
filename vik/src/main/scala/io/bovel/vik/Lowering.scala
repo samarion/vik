@@ -81,7 +81,7 @@ private final class Lowerer:
    *  solver would take for a store by its prefix.
    */
   private def reserve(name: String): Unit =
-    if minted(name) || name.startsWith("store!") then
+    if minted(name) || name.startsWith("store!") || name.startsWith("const!") then
       throw s2.Smt2Error(s"$name: a name the lowering uses; pick another")
   private val introduced = ArrayBuffer.empty[(String, String)] // fresh constants, declared before the assertion
   private val definitions = ArrayBuffer.empty[Formula] // the assertions defining them
@@ -223,6 +223,7 @@ private final class Lowerer:
     case s2.Term.Select(array, index) => Model.select(eval(array, model, scope), eval(index, model, scope))
     case s2.Term.Store(array, index, value) =>
       Model.store(eval(array, model, scope), eval(index, model, scope), eval(value, model, scope))
+    case s2.Term.ConstArray(sort, value) => Model.constArray(sort.text, eval(value, model, scope))
     case s2.Term.Ite(c, thn, els) => if truth(c, model, scope) then eval(thn, model, scope) else eval(els, model, scope)
     case s2.Term.Let(bindings, body) => eval(body, model, bindAll(bindings, model, scope))
     case s2.Term.Bool(f) => Term.boolean(if truth(f, model, scope) then True else False)
@@ -509,6 +510,7 @@ private final class Lowerer:
       macros.clear()
       rationalValues.clear()
       storeSymbols.clear()
+      constSymbols.clear()
       clearMemos()
       List(Command.Reset)
     case s2.Command.GetModel => List(Command.GetModel)
@@ -591,6 +593,7 @@ private final class Lowerer:
         case Sort.Array(_, element) => element
         case s => s.applied(1).getOrElse(throw s2.Smt2Error(s"select on $s"))
     case s2.Term.Store(array, _, _) => sortOf(array, env)
+    case s2.Term.ConstArray(sort, _) => sort
     case s2.Term.Ite(_, thn, els) =>
       // Real when either branch is: a numeral beside a real term is a real (issue 15).
       val t = sortOf(thn, env)
@@ -728,6 +731,7 @@ private final class Lowerer:
       ranged(App(a, List(term(index, env))), sortOf(t, env))
     case s2.Term.Store(array, index, value) =>
       App(storeSymbol(sortOf(array, env)), List(term(array, env), term(index, env), term(value, env)))
+    case s2.Term.ConstArray(sort, value) => App(constSymbol(sort), List(term(value, env)))
     case s2.Term.Ite(cond, thn, els) =>
       // A fresh constant `k` with `cond => k = thn` and `not cond => k = els`, asserted before the
       // current assertion; one per distinct `ite`, like the bit-vector operations.
@@ -889,6 +893,25 @@ private final class Lowerer:
           k
         }
       )
+
+  /** The `const!N` function symbol for the constant arrays of `sort`, declared
+   *  on first use like a [[storeSymbol]]: a function of the element to the
+   *  array, which the solver's array lemmas recognize by the name.
+   */
+  private val constSymbols = HashMap.empty[String, String]
+
+  private def constSymbol(arraySort: Sort): Term =
+    val key = sortString(arraySort)
+    val name = constSymbols.getOrElseUpdate(
+      key, {
+        if s2.Sorts.arrow(key).isEmpty then throw s2.Smt2Error(s"a constant array of $arraySort")
+        val n = freshName("const")
+        introduced += ((n, s2.Sorts.function(List(s2.Sorts.applied(key, 1)), key)))
+        functions(n) = Sort.Named(n)
+        n
+      }
+    )
+    Const(name)
 
   private val rationalProducts = Memo[(BigInt, BigInt, Term), Term]()
 

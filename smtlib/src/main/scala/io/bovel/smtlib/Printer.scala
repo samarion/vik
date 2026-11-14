@@ -95,6 +95,7 @@ object Printer:
       args.map(print).mkString(s"($head ", " ", ")")
     case Term.Select(array, index) => s"(select ${print(array)} ${print(index)})"
     case Term.Store(array, index, value) => s"(store ${print(array)} ${print(index)} ${print(value)})"
+    case Term.ConstArray(sort, value) => s"((as const ${sort.text}) ${print(value)})"
     case Term.Ite(cond, thn, els) => s"(ite ${print(cond)} ${print(thn)} ${print(els)})"
     case Term.Let(bs, body) => s"(let (${bindings(bs)}) ${print(body)})"
     case Term.Bool(formula) => print(formula)
