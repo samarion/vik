@@ -380,3 +380,15 @@ class SolverTest extends munit.FunSuite:
       List("sat")
     )
   }
+
+  test("a script's own map!N and const!N are its own, beside the maps and constant arrays") {
+    // Stainless writes an identifier `map` or `const` this way.
+    assertEquals(
+      Session.run(io.bovel.smtlib.Parser.parse(
+        """(declare-fun map!1 () (Array Int Bool)) (declare-fun const!2 () (Array Int Bool))
+          |(assert (= map!1 ((_ map not) const!2))) (assert (= const!2 ((as const (Array Int Bool)) true)))
+          |(assert (select map!1 0)) (check-sat)""".stripMargin
+      )),
+      List("unsat")
+    )
+  }

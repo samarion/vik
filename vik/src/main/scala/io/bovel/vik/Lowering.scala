@@ -81,7 +81,7 @@ private final class Lowerer:
    *  solver would take for a store by its prefix.
    */
   private def reserve(name: String): Unit =
-    if minted(name) || name.startsWith("store!") || name.startsWith("const!") || name.startsWith("map!") then
+    if minted(name) || name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!") then
       throw s2.Smt2Error(s"$name: a name the lowering uses; pick another")
   private val introduced = ArrayBuffer.empty[(String, String)] // fresh constants, declared before the assertion
   private val definitions = ArrayBuffer.empty[Formula] // the assertions defining them
@@ -976,7 +976,7 @@ private final class Lowerer:
         }
       )
 
-  /** The `const!N` function symbol for the constant arrays of `sort`, declared
+  /** The `array.const!N` function symbol for the constant arrays of `sort`, declared
    *  on first use like a [[storeSymbol]]: a function of the element to the
    *  array, which the solver's array lemmas recognize by the name.
    */
@@ -987,7 +987,7 @@ private final class Lowerer:
     val name = constSymbols.getOrElseUpdate(
       key, {
         if s2.Sorts.arrow(key).isEmpty then throw s2.Smt2Error(s"a constant array of $arraySort")
-        val n = freshName("const")
+        val n = freshName("array.const")
         introduced += ((n, s2.Sorts.function(List(s2.Sorts.applied(key, 1)), key)))
         functions(n) = Sort.Named(n)
         n
@@ -995,7 +995,7 @@ private final class Lowerer:
     )
     Const(name)
 
-  /** The `map!N` function symbol for the map of an operator over arrays,
+  /** The `array.map!N` function symbol for the map of an operator over arrays,
    *  declared on first use like a [[storeSymbol]], with the [[Pointwise]]
    *  template that says what the map holds at an index: the solver's array
    *  lemmas instantiate it there. Keyed on the operator as written and what it
@@ -1024,12 +1024,12 @@ private final class Lowerer:
     if (resultKey :: keys).exists(s2.Sorts.arrow(_).isEmpty) then
       throw s2.Smt2Error(s"(_ map $op) on ${arraySorts.map(_.text).mkString(" ")}")
     val literals = arrays.map {
-      case App(Const(c), List(v @ Num(_))) if c.startsWith("const!") => Some(v)
+      case App(Const(c), List(v @ Num(_))) if c.startsWith("array.const!") => Some(v)
       case _ => None
     }
     val name = mapSymbols.getOrElseUpdate(
       (op, macros.get(op), functions.get(op), keys, resultKey, literals), {
-        val f = freshName("map")
+        val f = freshName("array.map")
         // The operator is lowered on its own, over placeholders for the elements: what that mints
         // belongs to the template, and nothing of the assertion around the map is to be found in it.
         val (pendingIntroduced, pendingDefinitions) = (introduced.toList, definitions.toList)
@@ -1051,7 +1051,7 @@ private final class Lowerer:
           val value = term(body, inner)
           val formals = params.zip(elements).collect { case ((_, sort), Const(_)) => sortString(sort) }
           val (symbols, auxiliaries) = introduced.toList.partition((n, _) =>
-            n.startsWith("store!") || n.startsWith("const!") || n.startsWith("map!")
+            n.startsWith("store!") || n.startsWith("array.const!") || n.startsWith("array.map!")
           )
           templates(f) =
             Pointwise(elements, auxiliaries.map((n, s) => (n, formals, s)), value, definitions.toList, result.text)
