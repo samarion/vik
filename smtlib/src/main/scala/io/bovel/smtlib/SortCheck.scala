@@ -66,6 +66,13 @@ private[smtlib] final class SortCheck(
           expect(term(v, env), element, "the value of a store")
           s
         case s => throw Smt2Error(s"store on ${s.text}")
+    case Term.MapArray(op, arrays) =>
+      val sorts = arrays.map(term(_, env))
+      sorts.head match
+        case s @ Sort.Array(_, Sort.Bool) =>
+          for other <- sorts.tail do if other != s then throw Smt2Error(s"(_ map $op) on ${s.text} and ${other.text}")
+          s
+        case s => throw Smt2Error(s"(_ map $op) on ${s.text}")
     case Term.ConstArray(sort, v) =>
       sort match
         case Sort.Array(_, element) =>

@@ -33,6 +33,13 @@ enum Term:
    *  `((as const sort) value)`.
    */
   case ConstArray(sort: Sort, value: Term)
+
+  /** The array holding, at every index, a Boolean connective of what the arrays
+   *  hold there: `((_ map op) arrays...)`, with `op` one of `and`, `or`, `not`
+   *  and `=>` (the union, intersection, complement and inclusion of sets as
+   *  arrays of Booleans).
+   */
+  case MapArray(op: String, arrays: List[Term])
   case Ite(cond: Formula, thn: Term, els: Term)
   case Let(bindings: List[(String, Term | Formula)], body: Term)
 

@@ -660,6 +660,9 @@ final class Parser:
         else throw Smt2Error(s"unknown symbol $name")
       )
     case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: _ :: Nil) if constantArray(s, env) => sort(s)
+    case SList(SList(SSymbol("_") :: SSymbol("map") :: SSymbol(op) :: Nil) :: a :: rest)
+        if mapped(op, rest.length + 1) =>
+      sortOf(a, env)
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => symbolSort(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       resultSort(instance(name, args.map(sortOf(_, env)), Some(sort(s))), args.length)
@@ -882,6 +885,8 @@ final class Parser:
       Term.Const(concrete)
     case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: v :: Nil) if constantArray(s, env) =>
       Term.ConstArray(sort(s), term(v, env))
+    case SList(SList(SSymbol("_") :: SSymbol("map") :: SSymbol(op) :: Nil) :: args) if mapped(op, args.length) =>
+      Term.MapArray(if op == "implies" then "=>" else op, args.map(term(_, env)))
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => Term.Const(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       Term.App(Term.Const(instance(name, args.map(sortOf(_, env)), Some(sort(s)))), args.map(term(_, env)))
@@ -932,9 +937,18 @@ final class Parser:
   private def constantArray(s: SExpr, env: Map[String, Sort]): Boolean =
     !env.contains("const") && !functions.contains("const") && !macros.contains("const") &&
       !polymorphic.contains("const") &&
-      (s match
-        case SList(SSymbol("Array") :: _) => true
+      (sort(s) match
+        case Sort.Array(_, _) => true
         case _ => false)
+
+  /** Whether `(_ map op)` on `n` arrays is one of the maps read: a Boolean
+   *  connective of the theory, at its arity.
+   */
+  private def mapped(op: String, n: Int): Boolean = op match
+    case "and" | "or" => n >= 1
+    case "not" => n == 1
+    case "=>" | "implies" => n == 2
+    case _ => false
 
   /** Checks that `name` is declared, bound or a macro. */
   private def declared(name: String, env: Map[String, Sort]): Unit =
