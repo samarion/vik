@@ -874,7 +874,8 @@ private final class Encoder(
 
   private def beyond(sort: String): Term = beyondIndices.getOrElseUpdate(
     sort, {
-      val name = witnessName()
+      var name = s"beyond!${beyondIndices.size}"
+      while declarations.contains(name) || introduced.contains(name) do name += "'"
       sort match
         case Encoder.bitVector(width) if width.nn.toInt >= 16 =>
           introduced(name) = "Int"
