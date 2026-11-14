@@ -83,7 +83,7 @@ final class Solver(val simplify: Boolean = true):
     if encoder != null && encoded.get(name).exists(_ != (argSorts, sort)) then dirty = true
     declarations(name) = (argSorts, sort)
     if encoder != null then encoded(name) = (argSorts, sort)
-    if name.startsWith("store!") then anyStore = true
+    if name.startsWith("store!") || name.startsWith("const!") then anyStore = true
 
   /** The declarations the live encoder was given, as given: what a declaration
    *  after a pop is held against.
@@ -591,7 +591,7 @@ private final class Encoder(
           if Sorts.arrow(sortOf(a.fun)).isDefined
             && (equatableFuns(a.fun) ||
               (a.fun match
-                case Term.App(Term.Const(n), _) => n.startsWith("store!")
+                case Term.App(Term.Const(n), _) => n.startsWith("store!") || n.startsWith("const!")
                 case _ => false)) =>
         a
     }.toList.groupBy(a => (sortOf(a.fun), a.args.length))
@@ -664,6 +664,7 @@ private final class Encoder(
       more = false
       val stores = classes.keys.collect {
         case s @ Term.App(Term.Const(name), List(_, _, _)) if name.startsWith("store!") => s
+        case c @ Term.App(Term.Const(name), List(_)) if name.startsWith("const!") => c
       }.toList
       val apps = if stores.isEmpty then Nil else classes.keys.collect { case a: Term.App => a }.toList
       for s <- stores; a <- apps do
@@ -862,6 +863,33 @@ private final class Encoder(
     case Term.App(Term.Const(n), _) if n.startsWith("store!") => Term.App(array, List(index))
     case _ => Term.App(array, List(index))
 
+  /** An index of `sort` no store writes at, for the sorts indexing a constant
+   *  array: reading there carries the value of a constant array through the
+   *  stores over it, so that `((as const A) 0)` with finitely many writes is
+   *  not `((as const A) 1)`. There is one when the sort has more values than a
+   *  script has stores; a constant array over another sort is refused.
+   */
+  private val beyondIndices = scala.collection.mutable.HashMap.empty[String, Term]
+  private val beyondDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
+
+  private def beyond(sort: String): Term = beyondIndices.getOrElseUpdate(
+    sort, {
+      val name = witnessName()
+      sort match
+        case Encoder.bitVector(width) if width.nn.toInt >= 16 =>
+          introduced(name) = "Int"
+          val w = Term.Const(name)
+          clauses += Array(lit(Formula.Le(Term.Num(0), w)))
+          clauses += Array(lit(Formula.Le(w, Term.Num(BigInt(2).pow(width.nn.toInt) - 1))))
+          w
+        case Encoder.bitVector(_) => throw io.bovel.smtlib.Smt2Error(s"a constant array over the small sort $sort")
+        case _ if finite(sort) => throw io.bovel.smtlib.Smt2Error(s"a constant array over the finite sort $sort")
+        case _ =>
+          introduced(name) = sort
+          Term.Const(name)
+    }
+  )
+
   private val arrayWritesDone = scala.collection.mutable.HashSet.empty[Term]
   private val arrayReadsDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
 
@@ -877,6 +905,19 @@ private final class Encoder(
         case Term.App(f, List(j)) if Sorts.arrow(sortOf(f)).isDefined => index(sortOf(f), j)
         case _ => ()
     for s <- stores do index(sortOf(s), s.args(1))
+    // The index beyond the writes (see [[beyond]]) is none of the written ones.
+    for s <- stores do
+      val indexSort = Sorts.arrow(sortOf(s)).get._1.head
+      for w <- beyondIndices.get(indexSort) do
+        if beyondDone.add((w, s.args(1))) then clauses += Array(lit(equalAt(indexSort, w, s.args(1))).neg)
+    // A constant array holds its value at every index of its sort: `const(d)(j) = d`.
+    for case c @ Term.App(Term.Const(name), List(d)) <- classes.keys.toList if name.startsWith("const!") do
+      val sort = sortOf(c)
+      val elementSort = Sorts.applied(sort, 1)
+      index(sort, beyond(Sorts.arrow(sort).get._1.head))
+      for j <- indices.getOrElse(sort, Nil).toList do
+        step()
+        if arrayReadsDone.add((c, j)) then clauses += Array(lit(equalAt(elementSort, selectTerm(c, j), d)))
     def equalAt(sort: String, l: Term, r: Term): Formula =
       if sort == "Int" || sort == "Real" then Formula.IntEq(l, r) else Formula.Eq(l, r)
     for case s @ Term.App(_, List(a, i, v)) <- stores do
@@ -1283,7 +1324,13 @@ private final class Encoder(
               Model.store(arrayValue(classOf(base), sort), valueOfTerm(i, indexSort), valueOfTerm(v, elementSort))
           }
           arraysBeingValued -= root
-          val start = written.getOrElse {
+          // A class with a constant array in it holds that array's value everywhere.
+          val constant = classes.keys.collectFirst {
+            case c @ Term.App(Term.Const(n), List(d))
+                if n.startsWith("const!") && classes.get(c).exists(k => eg.find(k) == root) =>
+              Model.constArray(Sorts.array(sort), valueOfTerm(d, elementSort))
+          }
+          val start = written.orElse(constant).getOrElse {
             Model.constArray(Sorts.array(sort), valueOfTerm(Term.Const("@default"), elementSort))
           }
           rows.toList.sortBy(_._1.toString).foldLeft(start) { case (acc, (i, v)) => Model.store(acc, i, v) }
@@ -1293,7 +1340,7 @@ private final class Encoder(
     val functions = Map.newBuilder[String, Model.Function]
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!")
+      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("const!")
     do
       // An array the assertions never read or wrote holds a default everywhere: a value all the same,
       // where `(select arr i)` was printed as itself (issue 48).
@@ -1304,7 +1351,7 @@ private final class Encoder(
     // A function into arrays: its graph, an array value per application the problem mentions (issue 27).
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!")
+      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("const!")
     do
       val rows = classes.keys.collect {
         case a @ Term.App(Term.Const(n), args) if n == name && args.length == argSorts.length =>
