@@ -956,7 +956,8 @@ final class Parser:
    */
   private def constantArray(s: SExpr, env: Map[String, Sort]): Boolean =
     !env.contains("const") && !functions.contains("const") && !macros.contains("const") &&
-      !polymorphic.contains("const") && (s match
+      !polymorphic.contains("const") &&
+      (s match
         case SList(SSymbol("Array") :: _) => true
         case _ => false)
 

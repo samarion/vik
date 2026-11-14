@@ -29,7 +29,9 @@ enum Term:
   case Select(array: Term, index: Term)
   case Store(array: Term, index: Term, value: Term)
 
-  /** The array of `sort` holding `value` at every index: `((as const sort) value)`. */
+  /** The array of `sort` holding `value` at every index:
+   *  `((as const sort) value)`.
+   */
   case ConstArray(sort: Sort, value: Term)
   case Ite(cond: Formula, thn: Term, els: Term)
   case Let(bindings: List[(String, Term | Formula)], body: Term)
