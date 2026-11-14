@@ -43,7 +43,7 @@ final case class Model(
         case _ => constants.getOrElse(name, term)
     case Term.App(Term.Const(name), List(a, i, v)) if name.startsWith("store!") =>
       Model.store(value(a), value(i), value(v))
-    case Term.App(Term.Const(name), List(d)) if name.startsWith("const!") => Model.constArray("?", value(d))
+    case Term.App(Term.Const(name), List(d)) if name.startsWith("array.const!") => Model.constArray("?", value(d))
     case Term.App(Term.Const(name), arrays) if maps.contains(name) =>
       // At an index, the template under the elements there. An auxiliary is valued by its definition
       // where that has the shape [[defined]] reads, and through its graph otherwise.

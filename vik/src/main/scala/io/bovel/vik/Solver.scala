@@ -83,7 +83,7 @@ final class Solver(val simplify: Boolean = true):
     if encoder != null && encoded.get(name).exists(_ != (argSorts, sort)) then dirty = true
     declarations(name) = (argSorts, sort)
     if encoder != null then encoded(name) = (argSorts, sort)
-    if name.startsWith("store!") || name.startsWith("const!") || name.startsWith("map!") then anyStore = true
+    if name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!") then anyStore = true
 
   /** What each declared map of arrays holds at an index (see [[Pointwise]]). */
   private[vik] val maps = HashMap.empty[String, Pointwise]
@@ -604,7 +604,7 @@ private final class Encoder(
             && (equatableFuns(a.fun) ||
               (a.fun match
                 case Term.App(Term.Const(n), _) =>
-                  n.startsWith("store!") || n.startsWith("const!") || n.startsWith("map!")
+                  n.startsWith("store!") || n.startsWith("array.const!") || n.startsWith("array.map!")
                 case _ => false)) =>
         a
     }.toList.groupBy(a => (sortOf(a.fun), a.args.length))
@@ -677,8 +677,8 @@ private final class Encoder(
       more = false
       val stores = classes.keys.collect {
         case s @ Term.App(Term.Const(name), List(_, _, _)) if name.startsWith("store!") => s
-        case c @ Term.App(Term.Const(name), List(_)) if name.startsWith("const!") => c
-        case m @ Term.App(Term.Const(name), _) if name.startsWith("map!") => m
+        case c @ Term.App(Term.Const(name), List(_)) if name.startsWith("array.const!") => c
+        case m @ Term.App(Term.Const(name), _) if name.startsWith("array.map!") => m
       }.toList
       val apps = if stores.isEmpty then Nil else classes.keys.collect { case a: Term.App => a }.toList
       for s <- stores; a <- apps do
@@ -937,7 +937,7 @@ private final class Encoder(
       for w <- beyondIndices.get(indexSort) do
         if beyondDone.add((w, s.args(1))) then clauses += Array(lit(equalAt(indexSort, w, s.args(1))).neg)
     // A constant array holds its value at every index of its sort: `const(d)(j) = d`.
-    for case c @ Term.App(Term.Const(name), List(d)) <- classes.keys.toList if name.startsWith("const!") do
+    for case c @ Term.App(Term.Const(name), List(d)) <- classes.keys.toList if name.startsWith("array.const!") do
       val sort = sortOf(c)
       val elementSort = Sorts.applied(sort, 1)
       index(sort, beyond(Sorts.arrow(sort).get._1.head))
@@ -948,7 +948,7 @@ private final class Encoder(
     // the arrays hold there: its template at their elements, each auxiliary of the template a
     // function of them, defined there (see [[Pointwise]]). The index beyond the writes is one of
     // them: it settles the map away from the indices read, as for a constant array.
-    for case m @ Term.App(Term.Const(name), arrays) <- classes.keys.toList if name.startsWith("map!") do
+    for case m @ Term.App(Term.Const(name), arrays) <- classes.keys.toList if name.startsWith("array.map!") do
       val pointwise = maps.getOrElse(name, throw io.bovel.smtlib.Smt2Error(s"$name: a map with no operator"))
       val sort = sortOf(m)
       val elementSort = Sorts.applied(sort, 1)
@@ -1373,7 +1373,7 @@ private final class Encoder(
           // A class with a constant array in it holds that array's value everywhere.
           val constant = classes.keys.collectFirst {
             case c @ Term.App(Term.Const(n), List(d))
-                if n.startsWith("const!") && classes.get(c).exists(k => eg.find(k) == root) =>
+                if n.startsWith("array.const!") && classes.get(c).exists(k => eg.find(k) == root) =>
               Model.constArray(Sorts.array(sort), valueOfTerm(d, elementSort))
           }
           // A class read at the index beyond the writes holds, away from its rows, what it holds there.
@@ -1390,8 +1390,8 @@ private final class Encoder(
     val functions = Map.newBuilder[String, Model.Function]
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("const!") &&
-        !name.startsWith("map!")
+      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("array.const!") &&
+        !name.startsWith("array.map!")
     do
       // An array the assertions never read or wrote holds a default everywhere: a value all the same,
       // where `(select arr i)` was printed as itself (issue 48).
@@ -1402,8 +1402,8 @@ private final class Encoder(
     // A function into arrays: its graph, an array value per application the problem mentions (issue 27).
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("const!") &&
-        !name.startsWith("map!")
+      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("array.const!") &&
+        !name.startsWith("array.map!")
     do
       val rows = classes.keys.collect {
         case a @ Term.App(Term.Const(n), args) if n == name && args.length == argSorts.length =>
