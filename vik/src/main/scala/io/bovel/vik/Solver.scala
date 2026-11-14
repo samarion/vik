@@ -85,6 +85,17 @@ final class Solver(val simplify: Boolean = true):
     if encoder != null then encoded(name) = (argSorts, sort)
     if name.startsWith("store!") || name.startsWith("const!") || name.startsWith("map!") then anyStore = true
 
+  /** What each declared map of arrays holds at an index (see [[Pointwise]]). */
+  private[vik] val maps = HashMap.empty[String, Pointwise]
+
+  /** Declares a map of arrays: the symbol, and the auxiliaries of what it holds
+   *  at an index, each a function of the elements there.
+   */
+  def declare(name: String, sort: String, pointwise: Pointwise): Unit =
+    maps(name) = pointwise
+    for (auxiliary, argSorts, result) <- pointwise.auxiliaries do declare(auxiliary, argSorts, result)
+    declare(name, Nil, sort)
+
   /** The declarations the live encoder was given, as given: what a declaration
    *  after a pop is held against.
    */
@@ -317,7 +328,7 @@ final class Solver(val simplify: Boolean = true):
   private def decide(keepGoing: () => Boolean): Result =
     if encoder == null || dirty then
       if encoder != null then encoder.nn.addCounts(retired)
-      val e = Encoder(declarations, datatypes.toList, () => anyStore, () => asked())
+      val e = Encoder(declarations, datatypes.toList, maps, () => anyStore, () => asked())
       encoder = e
       encoded.clear()
       encoded ++= declarations
@@ -441,6 +452,7 @@ private object Encoder:
 private final class Encoder(
     declarations: HashMap[String, (List[String], String)],
     datatypes: List[Datatype],
+    maps: HashMap[String, Pointwise], // what each map of arrays holds at an index
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
     keepGoing: () => Boolean // of the solve under way (see Solver.solve)
 ):
@@ -691,7 +703,17 @@ private final class Encoder(
    *  inner array of it — at one index.
    */
   private def applicable(a: Term.App, s: Term): Boolean =
-    a != s && a.fun != s && a.args.length == 1 && sortOf(a.fun) == sortOf(s)
+    a != s && a.fun != s && a.args.length == 1 && !declaredFunction(a.fun) && sortOf(a.fun) == sortOf(s)
+
+  /** Whether a term is a declared function symbol: of an array's sort when it
+   *  takes one argument, and no array — nothing equates it with one, and its
+   *  argument is no index. An auxiliary of a map's operator is one, applied to
+   *  the elements of the arrays: taken for an array, the element would be an
+   *  index, the map read there, and its element there another, without end.
+   */
+  private def declaredFunction(f: Term): Boolean = f match
+    case Term.Const(name) => declarations.get(name).exists(_._1.nonEmpty)
+    case _ => false
 
   /** Extensionality: for every equality atom between function-sorted terms, the
    *  lemma `f = g ∨ f(c) ≠ g(c)` with fresh constants `c` (the witnesses of the
@@ -905,6 +927,7 @@ private final class Encoder(
       indices.getOrElseUpdate(sort, scala.collection.mutable.LinkedHashSet.empty) += j
     for a <- classes.keys do
       a match
+        case Term.App(f, List(_)) if declaredFunction(f) => ()
         case Term.App(f, List(j)) if Sorts.arrow(sortOf(f)).isDefined => index(sortOf(f), j)
         case _ => ()
     for s <- stores do index(sortOf(s), s.args(1))
@@ -921,23 +944,26 @@ private final class Encoder(
       for j <- indices.getOrElse(sort, Nil).toList do
         step()
         if arrayReadsDone.add((c, j)) then clauses += Array(lit(equalAt(elementSort, selectTerm(c, j), d)))
-    // A map holds, at every index of its sort, the connective of what its arrays hold there. The
-    // index beyond the writes is one of them: it settles the map away from the indices read, as
-    // for a constant array.
+    // A map holds, at every index of its sort and of its arrays', what its operator makes of what
+    // the arrays hold there: its template at their elements, each auxiliary of the template a
+    // function of them, defined there (see [[Pointwise]]). The index beyond the writes is one of
+    // them: it settles the map away from the indices read, as for a constant array.
     for case m @ Term.App(Term.Const(name), arrays) <- classes.keys.toList if name.startsWith("map!") do
+      val pointwise = maps.getOrElse(name, throw io.bovel.smtlib.Smt2Error(s"$name: a map with no operator"))
       val sort = sortOf(m)
+      val elementSort = Sorts.applied(sort, 1)
       index(sort, beyond(Sorts.arrow(sort).get._1.head))
-      val op = name.split('!')(1)
-      for j <- indices.getOrElse(sort, Nil).toList do
+      for j <- (sort :: arrays.map(sortOf)).distinct.flatMap(indices.getOrElse(_, Nil)).distinct do
         step()
         if arrayReadsDone.add((m, j)) then
-          val at = arrays.map(a => Formula.Pred(selectTerm(a, j)): Formula)
-          val mapped = op match
-            case "and" => Formula.And(at)
-            case "or" => Formula.Or(at)
-            case "not" => Formula.Not(at.head)
-            case _ => Formula.Implies(at.head, at(1))
-          clauses += Array(lit(Formula.Iff(Formula.Pred(selectTerm(m, j)), mapped)))
+          val (definitions, value) = pointwise.at(arrays.map(selectTerm(_, j)), (c, elements) => Term.App(c, elements))
+          for d <- definitions do clauses += Array(lit(d))
+          clauses += Array(
+            lit(
+              if elementSort == "Bool" then Formula.Iff(Formula.Pred(selectTerm(m, j)), Formula.pred(value))
+              else equalAt(elementSort, selectTerm(m, j), value)
+            )
+          )
     def equalAt(sort: String, l: Term, r: Term): Formula =
       if sort == "Int" || sort == "Real" then Formula.IntEq(l, r) else Formula.Eq(l, r)
     for case s @ Term.App(_, List(a, i, v)) <- stores do
@@ -1394,7 +1420,7 @@ private final class Encoder(
         }.toList
         val default = rows.headOption.map(_._2).getOrElse(valueOfTerm(Term.Const("@default"), sort))
         functions += name -> Model.Function(argSorts, sort, rows, default)
-    Model(constants.result(), functions.result(), datatypes)
+    Model(constants.result(), functions.result(), datatypes, maps.toMap)
 
 /** Several theories over disjoint sets of atoms, asserted and checked in turn,
  *  without exchange of equalities between them; `owner(v)` is the theory of the

@@ -685,9 +685,9 @@ final class Parser:
         else throw Smt2Error(s"unknown symbol $name")
       )
     case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: _ :: Nil) if constantArray(s, env) => sort(s)
-    case SList(SList(SSymbol("_") :: SSymbol("map") :: SSymbol(op) :: Nil) :: a :: rest)
-        if mapped(op, rest.length + 1) =>
-      sortOf(a, env)
+    case SList(SList(SSymbol("_") :: SSymbol("map") :: op :: Nil) :: args) if args.nonEmpty =>
+      val (index, params, body) = mapped(op, args, env)
+      Sort.Array(index, sortOf(body, env ++ params))
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => symbolSort(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       resultSort(instance(name, args.map(sortOf(_, env)), Some(sort(s))), args.length)
@@ -910,8 +910,9 @@ final class Parser:
       Term.Const(concrete)
     case SList(SList(SSymbol("as") :: SSymbol("const") :: s :: Nil) :: v :: Nil) if constantArray(s, env) =>
       Term.ConstArray(sort(s), term(v, env))
-    case SList(SList(SSymbol("_") :: SSymbol("map") :: SSymbol(op) :: Nil) :: args) if mapped(op, args.length) =>
-      Term.MapArray(if op == "implies" then "=>" else op, args.map(term(_, env)))
+    case SList(SList(SSymbol("_") :: SSymbol("map") :: op :: Nil) :: args) if args.nonEmpty =>
+      val (_, params, body) = mapped(op, args, env)
+      Term.MapArray(op.toString, params, term(body, env ++ params), args.map(term(_, env)))
     case SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) => Term.Const(instance(name, Nil, Some(sort(s))))
     case SList(SList(SSymbol("as") :: SSymbol(name) :: s :: Nil) :: args) =>
       Term.App(Term.Const(instance(name, args.map(sortOf(_, env)), Some(sort(s)))), args.map(term(_, env)))
@@ -966,14 +967,30 @@ final class Parser:
         case Sort.Array(_, _) => true
         case _ => false)
 
-  /** Whether `(_ map op)` on `n` arrays is one of the maps read: a Boolean
-   *  connective of the theory, at its arity.
+  /** What `((_ map op) args...)` means at an index: the index sort of the
+   *  arrays, a parameter per array of its element sort, and `op` applied to the
+   *  parameters, to be read as any application is. `op` is a symbol, an indexed
+   *  one, or z3's `(symbol (sorts...) sort)`, which names the instance of an
+   *  overloaded symbol (`(+ (Int Int) Int)`): the sorts of the elements say as
+   *  much, and only the symbol is kept. z3's `implies` is `=>`. The parameters
+   *  are named as no script names a symbol (the lowering refuses the prefix).
    */
-  private def mapped(op: String, n: Int): Boolean = op match
-    case "and" | "or" => n >= 1
-    case "not" => n == 1
-    case "=>" | "implies" => n == 2
-    case _ => false
+  private def mapped(op: SExpr, args: List[SExpr], env: Map[String, Sort]): (Sort, List[(String, Sort)], SExpr) =
+    val sorts = args.map(a =>
+      sortOf(a, env) match
+        case Sort.Array(index, element) => (index, element)
+        case s => throw Smt2Error(s"(_ map $op) on ${s.text}")
+    )
+    val params = sorts.zipWithIndex.map { case ((_, element), k) => (s"map!x!$k", element) }
+    val head = op match
+      case SList(symbol :: SList(_) :: _ :: Nil) => symbol
+      case other => other
+    val applied = head match
+      case SSymbol("implies")
+          if !env.contains("implies") && !functions.contains("implies") && !macros.contains("implies") =>
+        SSymbol("=>")
+      case other => other
+    (sorts.head._1, params, SList(applied :: params.map((name, _) => SSymbol(name))))
 
   /** Checks that `name` is declared, bound or a macro. */
   private def declared(name: String, env: Map[String, Sort]): Unit =

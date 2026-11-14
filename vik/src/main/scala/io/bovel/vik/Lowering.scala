@@ -134,6 +134,7 @@ private final class Lowerer:
     rangedApplications.clear()
     loweredOperations.clear()
     loweredDivisions.clear()
+    quotients.clear()
     loweredSignedDivisions.clear()
     loweredBits.clear()
     bitConstants.clear()
@@ -212,7 +213,13 @@ private final class Lowerer:
         case ArithOp.Div => number(values.reduce(_ / _)) // a zero divisor is refused before this, by the lowering
         case ArithOp.ToReal => number(values.head)
         case ArithOp.ToInt => Num(values.head.floor)
-        case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs => throw s2.Unsupported(s"${op.name} is not supported")
+        case ArithOp.Abs => Num(integer(eval(args.head, model, scope)).abs)
+        case ArithOp.IntDiv | ArithOp.Mod =>
+          // As SMT-LIB defines them: the remainder is in `[0, |b|)`.
+          val (a, b) = (integer(eval(args.head, model, scope)), args.tail.map(d => integer(eval(d, model, scope))))
+          if b.exists(_.signum == 0) then throw s2.Unsupported(s"${op.name} by zero is not supported")
+          if op == ArithOp.Mod then Num(a.mod(b.head.abs))
+          else Num(b.foldLeft(a)((n, d) => (n - n.mod(d.abs)) / d))
     case s2.Term.BvApp(op, args) =>
       val widths = args.map(a =>
         sortOf(a, scope.sorts) match
@@ -224,7 +231,18 @@ private final class Lowerer:
     case s2.Term.Store(array, index, value) =>
       Model.store(eval(array, model, scope), eval(index, model, scope), eval(value, model, scope))
     case s2.Term.ConstArray(sort, value) => Model.constArray(sort.text, eval(value, model, scope))
-    case s2.Term.MapArray(op, arrays) => Model.mapArrays(op, arrays.map(eval(_, model, scope)))
+    case s2.Term.MapArray(_, params, body, arrays) =>
+      // The operator sees the elements and the declarations, never the bindings around the map.
+      Model.mapArrays(
+        sortOf(t, scope.sorts).text,
+        arrays.map(eval(_, model, scope)),
+        elements =>
+          eval(
+            body,
+            model,
+            params.zip(elements).foldLeft(Scope.empty) { case (inner, ((p, sort), e)) => inner.bound(p, e, sort) }
+          )
+      )
     case s2.Term.Ite(c, thn, els) => if truth(c, model, scope) then eval(thn, model, scope) else eval(els, model, scope)
     case s2.Term.Let(bindings, body) => eval(body, model, bindAll(bindings, model, scope))
     case s2.Term.Bool(f) => Term.boolean(if truth(f, model, scope) then True else False)
@@ -521,6 +539,7 @@ private final class Lowerer:
       storeSymbols.clear()
       constSymbols.clear()
       mapSymbols.clear()
+      templates.clear()
       clearMemos()
       List(Command.Reset)
     case s2.Command.GetModel => List(Command.GetModel)
@@ -540,7 +559,7 @@ private final class Lowerer:
       // The symbols minted here are declared for good: a `store!N` stays in `storeSymbols`, and a later
       // assertion that reuses it needs the solver to know it (issue 16). Their definitions cannot be
       // asserted after a check and go with the command instead.
-      val declared = introduced.toList.map((name, sort) => Command.DeclareFun(name, Nil, sort))
+      val declared = declarations()
       introduced.clear()
       definitions.clear()
       clearMemos() // a constant minted here has no definition: later uses must not find it
@@ -554,10 +573,18 @@ private final class Lowerer:
     case s2.Command.GetInfo(key) => List(Command.GetInfo(key))
     case s2.Command.Other(sexpr) => List(Command.Other(sexpr))
 
+  /** What the lowering introduced, as declarations: a map of arrays with its
+   *  template.
+   */
+  private def declarations(): List[Command] = introduced.toList.map((name, sort) =>
+    templates.get(name) match
+      case Some(pointwise) => Command.DeclareMap(name, sort, pointwise)
+      case None => Command.DeclareFun(name, Nil, sort)
+  )
+
   /** The introduced declarations and defining assertions, then the command. */
   private def flush(command: Command): List[Command] =
-    val out = introduced.toList.map((name, sort) => Command.DeclareFun(name, Nil, sort)) ++
-      definitions.toList.map(Command.Assert(_)) :+ command
+    val out = declarations() ++ definitions.toList.map(Command.Assert(_)) :+ command
     introduced.clear()
     definitions.clear()
     out
@@ -604,7 +631,10 @@ private final class Lowerer:
         case s => s.applied(1).getOrElse(throw s2.Smt2Error(s"select on $s"))
     case s2.Term.Store(array, _, _) => sortOf(array, env)
     case s2.Term.ConstArray(sort, _) => sort
-    case s2.Term.MapArray(_, arrays) => sortOf(arrays.head, env)
+    case s2.Term.MapArray(op, params, body, arrays) =>
+      sortOf(arrays.head, env) match
+        case Sort.Array(index, _) => Sort.Array(index, sortOf(body, elementsEnv(params)))
+        case s => throw s2.Smt2Error(s"(_ map $op) on $s")
     case s2.Term.Ite(_, thn, els) =>
       // Real when either branch is: a numeral beside a real term is a real (issue 15).
       val t = sortOf(thn, env)
@@ -743,8 +773,9 @@ private final class Lowerer:
     case s2.Term.Store(array, index, value) =>
       App(storeSymbol(sortOf(array, env)), List(term(array, env), term(index, env), term(value, env)))
     case s2.Term.ConstArray(sort, value) => App(constSymbol(sort), List(term(value, env)))
-    case s2.Term.MapArray(op, arrays) =>
-      App(mapSymbol(op, arrays.length, sortOf(arrays.head, env)), arrays.map(term(_, env)))
+    case s2.Term.MapArray(op, params, body, arrays) =>
+      val lowered = arrays.map(term(_, env))
+      App(mapSymbol(op, params, body, arrays.map(sortOf(_, env)), sortOf(t, env), lowered), lowered)
     case s2.Term.Ite(cond, thn, els) =>
       // A fresh constant `k` with `cond => k = thn` and `not cond => k = els`, asserted before the
       // current assertion; one per distinct `ite`, like the bit-vector operations.
@@ -818,8 +849,54 @@ private final class Lowerer:
       literalValue(r) match
         case Some((p, q)) => Num(floorDiv(p, q))
         case None => floor(r)
-    case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs =>
-      throw s2.Unsupported(s"${op.name} is not supported")
+    case ArithOp.Abs =>
+      // A fresh constant `k` with `t ≥ 0 => k = t` and `t < 0 => k = -t`, like a term-level `ite`.
+      term(args.head, env) match
+        case Num(v) => Num(v.abs)
+        case t =>
+          loweredOperations.getOrElseUpdate(
+            ("abs", List(t), Nil), {
+              val name = freshName("abs")
+              introduced += ((name, "Int"))
+              functions(name) = Sort.Int
+              val k = Const(name)
+              definitions += Implies(Ge(t, Num(0)), IntEq(k, t))
+              definitions += Implies(Lt(t, Num(0)), IntEq(k, Term.linear(List((BigInt(-1), t)))))
+              k
+            }
+          )
+    case ArithOp.IntDiv | ArithOp.Mod =>
+      // By nonzero numerals only, which keeps it linear: the rest is outside the fragment.
+      val divisors = args.tail.map(d =>
+        term(d, env) match
+          case Num(n) if n.signum != 0 => n
+          case _ => throw s2.Unsupported(s"${op.name} by other than a nonzero numeral is not supported")
+      )
+      if op == ArithOp.Mod then quotient(term(args.head, env), divisors.head)._2
+      else divisors.foldLeft(term(args.head, env))((t, n) => quotient(t, n)._1)
+
+  private val quotients = Memo[(Term, BigInt), (Term, Term)]()
+
+  /** `(div t n, mod t n)` for a nonzero numeral `n`, as SMT-LIB defines them:
+   *  fresh constants `q` and `r` with `t = n q + r` and `0 ≤ r < |n|`, which
+   *  pins both, so the definition is sound under both polarities.
+   */
+  private def quotient(t: Term, n: BigInt): (Term, Term) = t match
+    case Num(v) =>
+      val r = v.mod(n.abs)
+      (Num((v - r) / n), Num(r))
+    case _ =>
+      quotients.getOrElseUpdate(
+        (t, n), {
+          val name = freshName("div")
+          introduced += ((name, "Int"))
+          functions(name) = Sort.Int
+          val q = Const(name)
+          val r = freshInt("mod", 0, n.abs - 1)
+          definitions += IntEq(t, Term.linear(List((n, q), (BigInt(1), r))))
+          (q, r)
+        }
+      )
 
   /** `is_int r`: `r` equals its own floor — sound under negation too, the floor
    *  being pinned uniquely by its definition. A literal folds.
@@ -926,19 +1003,79 @@ private final class Lowerer:
     )
     Const(name)
 
-  /** The `map!op!N` function symbol for the map of `op` over `n` arrays of
-   *  `sort`, declared on first use like a [[storeSymbol]]; the solver's array
-   *  lemmas read the connective from the name.
+  /** The `map!N` function symbol for the map of an operator over arrays,
+   *  declared on first use like a [[storeSymbol]], with the [[Pointwise]]
+   *  template that says what the map holds at an index: the solver's array
+   *  lemmas instantiate it there. Keyed on the operator as written and what it
+   *  stands for then (a macro's definition, a function's sort), the sorts of
+   *  the arrays, and the numerals of the constant arrays among them, which the
+   *  template has folded in: `div` by `((as const (Array I Int)) 2)` is linear
+   *  that way.
    */
-  private val mapSymbols = HashMap.empty[(String, Int, String), String]
+  private val mapSymbols = HashMap.empty[Any, String]
+  private val templates = HashMap.empty[String, Pointwise]
 
-  private def mapSymbol(op: String, n: Int, arraySort: Sort): Term =
-    val key = sortString(arraySort)
+  /** The parameters of a map's operator as an environment, for [[sortOf]]. */
+  private def elementsEnv(params: List[(String, Sort)]): Env =
+    params.map((p, s) => p -> (if s == Sort.Bool then Value.F(True) else Value.T(Const(p), s))).toMap
+
+  private def mapSymbol(
+      op: String,
+      params: List[(String, Sort)],
+      body: s2.Term,
+      arraySorts: List[Sort],
+      result: Sort,
+      arrays: List[Term]
+  ): Term =
+    val keys = arraySorts.map(sortString)
+    val resultKey = sortString(result)
+    if (resultKey :: keys).exists(s2.Sorts.arrow(_).isEmpty) then
+      throw s2.Smt2Error(s"(_ map $op) on ${arraySorts.map(_.text).mkString(" ")}")
+    val literals = arrays.map {
+      case App(Const(c), List(v @ Num(_))) if c.startsWith("const!") => Some(v)
+      case _ => None
+    }
     val name = mapSymbols.getOrElseUpdate(
-      (op, n, key), {
-        if s2.Sorts.arrow(key).isEmpty then throw s2.Smt2Error(s"(_ map $op) on $arraySort")
-        val f = freshName(s"map!$op")
-        introduced += ((f, s2.Sorts.function(List.fill(n)(key), key)))
+      (op, macros.get(op), functions.get(op), keys, resultKey, literals), {
+        val f = freshName("map")
+        // The operator is lowered on its own, over placeholders for the elements: what that mints
+        // belongs to the template, and nothing of the assertion around the map is to be found in it.
+        val (pendingIntroduced, pendingDefinitions) = (introduced.toList, definitions.toList)
+        introduced.clear()
+        definitions.clear()
+        clearMemos()
+        try
+          val elements = params.zip(literals).map {
+            case (_, Some(v)) => v
+            case ((_, _), None) => Const(freshName("element"))
+          }
+          val inner: Env = params.zip(elements).map { case ((p, sort), x) =>
+            p -> (if sort == Sort.Bool then Value.F(Formula.pred(x)) else Value.T(x, sort))
+          }.toMap
+          for case ((_, sort), x @ Const(_)) <- params.zip(elements) do
+            sort match
+              case Sort.BitVec(w) => definitions += range(x, w) // an element is in range, as a read of it would say
+              case _ => ()
+          val value = term(body, inner)
+          val formals = params.zip(elements).collect { case ((_, sort), Const(_)) => sortString(sort) }
+          val (symbols, auxiliaries) = introduced.toList.partition((n, _) =>
+            n.startsWith("store!") || n.startsWith("const!") || n.startsWith("map!")
+          )
+          templates(f) =
+            Pointwise(elements, auxiliaries.map((n, s) => (n, formals, s)), value, definitions.toList, result.text)
+          introduced.clear()
+          introduced ++= pendingIntroduced
+          introduced ++= symbols // an array operation of the operator's is declared like any other
+        catch
+          case e: Throwable =>
+            introduced.clear()
+            introduced ++= pendingIntroduced
+            throw e
+        finally
+          definitions.clear()
+          definitions ++= pendingDefinitions
+          clearMemos()
+        introduced += ((f, s2.Sorts.function(keys, resultKey)))
         functions(f) = Sort.Named(f)
         f
       }

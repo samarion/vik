@@ -15,6 +15,7 @@ import io.bovel.vik.{Command, Lowering, Solver}
   for command <- script.commands do
     command match
       case Command.DeclareFun(name, argSorts, sort) => solver.declare(name, argSorts, sort)
+      case Command.DeclareMap(name, sort, pointwise) => solver.declare(name, sort, pointwise)
       case Command.DeclareDatatypes(datatypes) => datatypes.foreach(solver.declare)
       case Command.Assert(formula) => solver.assert(formula)
       case Command.AssertGlobal(formula) => solver.assertGlobal(formula)

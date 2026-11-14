@@ -291,6 +291,97 @@ class SolverTest extends munit.FunSuite:
     )
   }
 
+  test("integer division and remainder by a numeral, and the absolute value") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
+      "(declare-fun x () Int) (declare-fun y () Int) " + script
+    ))
+    assertEquals(
+      play(
+        "(assert (= y (div x 2))) (assert (= (mod x 2) 1)) (assert (= (abs x) 7)) (assert (< x 0)) (check-sat) " +
+          "(get-value (x y (div x (- 2)) (mod x (- 2)) (abs y)))"
+      ),
+      List("sat", "((x (- 7)) (y (- 4)) ((div x (- 2)) 4) ((mod x (- 2)) 1) ((abs y) 4))")
+    )
+    assertEquals(play("(assert (not (= x (+ (* 3 (div x 3)) (mod x 3))))) (check-sat)"), List("unsat"))
+    assertEquals(play("(assert (or (< (mod x (- 3)) 0) (> (mod x (- 3)) 2))) (check-sat)"), List("unsat"))
+    assertEquals(play("(assert (not (= (abs x) (abs (- x))))) (check-sat)"), List("unsat"))
+    assertEquals(play("(assert (= (div x 2) (div (+ x 1) 2))) (assert (= (mod x 2) 1)) (check-sat)"), List("unsat"))
+  }
+
+  test("the maps of arrays, of any operator") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
+      "(define-sort B () (Array Int Int)) (declare-fun a () B) (declare-fun b () B) (declare-fun c () B) " +
+        "(declare-fun i () Int) (declare-fun f (Int Int) Int) " +
+        "(define-fun mx ((x Int) (y Int)) Int (ite (< x y) y x)) " + script
+    ))
+    // The sum of bags, with z3's sorted operator; the value is the model's.
+    assertEquals(
+      play(
+        "(assert (= c ((_ map (+ (Int Int) Int)) a b))) (assert (= (select a 3) 2)) (assert (= (select b 3) 5)) " +
+          "(check-sat) (get-value ((select c 3))) (assert (not (= (select c 3) 7))) (check-sat)"
+      ),
+      List("sat", "(((select c 3) 7))", "unsat")
+    )
+    assertEquals(play("(assert (not (= ((_ map +) a b) ((_ map +) b a)))) (check-sat)"), List("unsat"))
+    assertEquals(play("(assert (not (= ((_ map +) a ((as const B) 0)) a))) (check-sat)"), List("unsat"))
+    assertEquals(play("(assert (not (= ((_ map -) a a) ((as const B) 0)))) (check-sat)"), List("unsat"))
+    // To another element sort, of a declared function, of a defined one.
+    assertEquals(
+      play("(assert (select ((_ map <=) a b) i)) (assert (> (select a i) (select b i))) (check-sat)"),
+      List("unsat")
+    )
+    assertEquals(
+      play("(assert (not (= (select ((_ map f) a b) i) (f (select a i) (select b i))))) (check-sat)"),
+      List("unsat")
+    )
+    assertEquals(play("(assert (< (select ((_ map mx) a b) i) (select a i))) (check-sat)"), List("unsat"))
+    assertEquals(
+      play("(assert (= ((_ map mx) a b) a)) (assert (> (select b i) (select a i))) (check-sat)"),
+      List("unsat")
+    )
+    assertEquals(
+      play("(assert (= ((_ map mx) a b) a)) (assert (= (select b i) (select a i))) (check-sat)"),
+      List("sat")
+    )
+    // Arrays of different element sorts, and bit-vector elements.
+    assertEquals(
+      play(
+        "(declare-fun s () (Array Int Bool)) (assert (select s i)) " +
+          "(assert (not (= (select ((_ map ite) s a b) i) (select a i)))) (check-sat)"
+      ),
+      List("unsat")
+    )
+    assertEquals(
+      play(
+        "(declare-fun v () (Array Int (_ BitVec 8))) (declare-fun w () (Array Int (_ BitVec 8))) " +
+          "(assert (= (select ((_ map bvadd) v w) i) #x00)) (assert (= (select v i) #xff)) (check-sat) " +
+          "(assert (not (= (select w i) #x01))) (check-sat)"
+      ),
+      List("sat", "unsat")
+    )
+  }
+
+  test("the difference of bags, as Inox writes it") {
+    // `max(0, a - b)` at every index: `(d + |d|) div 2` for the difference `d`, the 2 a constant array.
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
+      "(define-sort B () (Array Int Int)) (declare-fun a () B) (declare-fun b () B) (declare-fun i () Int) " +
+        "(define-fun diff ((x B) (y B)) B (let ((d ((_ map (- (Int Int) Int)) x y))) " +
+        "((_ map (div (Int Int) Int)) ((_ map (+ (Int Int) Int)) d ((_ map (abs (Int) Int)) d)) ((as const B) 2)))) " +
+        script
+    ))
+    assertEquals(
+      play(
+        "(push 1) (assert (< (select (diff a b) i) 0)) (check-sat) (pop 1) " +
+          "(push 1) (assert (>= (select a i) (select b i))) " +
+          "(assert (not (= (select (diff a b) i) (- (select a i) (select b i))))) (check-sat) (pop 1) " +
+          "(assert (= (select a i) 5)) (assert (= (select b i) 2)) (assert (= (select (diff a b) i) 3)) (check-sat) " +
+          "(get-value ((select (diff a b) i) (select (diff b a) i)))"
+      ),
+      List("unsat", "unsat", "sat", "(((select (diff a b) i) 3) ((select (diff b a) i) 0))")
+    )
+    assertEquals(play("(assert (not (= (diff a a) ((as const B) 0)))) (check-sat)"), List("unsat"))
+  }
+
   test("the Boolean maps of arrays") {
     def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
       "(define-sort S () (Array Int Bool)) (declare-fun a () S) (declare-fun b () S) (declare-fun c () S) " +

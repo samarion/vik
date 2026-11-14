@@ -34,12 +34,15 @@ enum Term:
    */
   case ConstArray(sort: Sort, value: Term)
 
-  /** The array holding, at every index, a Boolean connective of what the arrays
-   *  hold there: `((_ map op) arrays...)`, with `op` one of `and`, `or`, `not`
-   *  and `=>` (the union, intersection, complement and inclusion of sets as
-   *  arrays of Booleans).
+  /** The array holding, at every index, `op` of what the arrays hold there:
+   *  `((_ map op) arrays...)`, for any `op` a term can apply — a connective
+   *  (the union of sets as arrays of Booleans), an arithmetic operation (the
+   *  sum of bags as arrays of integers), a declared or defined function. `op`
+   *  is as written, for the printer; `body` is its application to `params`, one
+   *  per array and of its element sort, which is what the map means at an
+   *  index.
    */
-  case MapArray(op: String, arrays: List[Term])
+  case MapArray(op: String, params: List[(String, Sort)], body: Term, arrays: List[Term])
   case Ite(cond: Formula, thn: Term, els: Term)
   case Let(bindings: List[(String, Term | Formula)], body: Term)
 

@@ -222,6 +222,7 @@ final class Session(
 
   private def declare(command: Command): Unit = command match
     case Command.DeclareFun(name, argSorts, sort) => current.declare(name, argSorts, sort)
+    case Command.DeclareMap(name, sort, pointwise) => current.declare(name, sort, pointwise)
     case Command.DeclareDatatypes(datatypes) => datatypes.foreach(current.declare)
     case _ => ()
 
@@ -294,6 +295,10 @@ final class Session(
           lastCheck = ""
           declarations += command
           if declaredAt.length > 1 && !globalDeclarations then declaredAt.last += command
+          declare(command)
+        case Command.DeclareMap(_, _, _) => // kept past the pop of its level: the lowering keeps the symbol
+          lastCheck = ""
+          declarations += command
           declare(command)
         case Command.Assert(formula) =>
           lastCheck = ""

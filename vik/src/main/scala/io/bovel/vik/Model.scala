@@ -16,7 +16,8 @@ import io.bovel.lia
 final case class Model(
     constants: Map[String, Term],
     functions: Map[String, Model.Function],
-    datatypes: List[io.bovel.smtlib.Datatype] = Nil
+    datatypes: List[io.bovel.smtlib.Datatype] = Nil,
+    maps: Map[String, Pointwise] = Map.empty
 ):
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
@@ -43,8 +44,21 @@ final case class Model(
     case Term.App(Term.Const(name), List(a, i, v)) if name.startsWith("store!") =>
       Model.store(value(a), value(i), value(v))
     case Term.App(Term.Const(name), List(d)) if name.startsWith("const!") => Model.constArray("?", value(d))
-    case Term.App(Term.Const(name), arrays) if name.startsWith("map!") =>
-      Model.mapArrays(name.split('!')(1), arrays.map(value))
+    case Term.App(Term.Const(name), arrays) if maps.contains(name) =>
+      // At an index, the template under the elements there. An auxiliary is valued by its definition
+      // where that has the shape [[defined]] reads, and through its graph otherwise.
+      val pointwise = maps(name)
+      val minted = pointwise.auxiliaries.map(_._1).toSet
+      Model.mapArrays(
+        pointwise.sort,
+        arrays.map(value),
+        elements =>
+          val formals = pointwise.params.zip(elements).collect { case (Term.Const(x), e) => x -> e }
+          val local =
+            pointwise.definitions.foldLeft(copy(constants = constants ++ formals))((m, d) => m.defined(d, minted))
+          if minted.forall(local.constants.contains) then local.value(pointwise.value)
+          else value(pointwise.at(elements, (c, actuals) => Term.App(c, actuals))._2)
+      )
     case Term.App(Term.Const(name), List(arg)) if selectors.contains(name) => // a selector on a constructor value
       val (constructor, i) = selectors(name)
       value(arg) match
@@ -133,30 +147,17 @@ object Model:
   /** `array` with `value` at `index`: `(store array index value)`. */
   def store(array: Term, index: Term, value: Term): Term = Term.App(Term.Const("store"), List(array, index, value))
 
-  /** The map of a Boolean connective (`and`, `or`, `not`, `=>`) over array
-   *  values: the connective of the defaults, and of the elements at every index
-   *  one of the arrays writes.
+  /** The map over array values, of sort `sort`, of the operator that gives
+   *  `at(elements)` from the elements of the arrays at an index: `at` of the
+   *  defaults, and of the elements at every index one of the arrays writes.
    */
-  def mapArrays(op: String, arrays: List[Term]): Term =
-    def connective(values: List[Term]): Term =
-      val bs = values.map(_ == Term.Bool(Formula.True))
-      val b = op match
-        case "and" => bs.forall(identity)
-        case "or" => bs.exists(identity)
-        case "not" => !bs.head
-        case _ => !bs.head || bs(1)
-      Term.Bool(if b then Formula.True else Formula.False)
-    def constant(array: Term): Option[String] = array match
-      case Term.App(Term.Const("store"), List(a, _, _)) => constant(a)
-      case Term.App(Term.Const(name), List(_)) if name.startsWith("(as const ") => Some(name)
-      case _ => None
+  def mapArrays(sort: String, arrays: List[Term], at: List[Term] => Term): Term =
     val graphs = arrays.map(graph)
-    val name = arrays.flatMap(constant).headOption.getOrElse("(as const ?)")
-    val default = connective(graphs.map(_._1))
+    val default = at(graphs.map(_._1))
     val indices = graphs.flatMap(_._2.keys).distinct.sortBy(_.toString)
-    indices.foldLeft(Term.App(Term.Const(name), List(default)): Term) { (acc, i) =>
-      val v = connective(arrays.map(select(_, i)))
-      if v == default then acc else store(acc, i, v)
+    indices.foldLeft(constArray(sort, default)) { (acc, i) =>
+      val v = at(arrays.map(select(_, i)))
+      if same(v, default) then acc else store(acc, i, v)
     }
 
   /** Whether a value is an array, in the form above. */
