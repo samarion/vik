@@ -252,3 +252,40 @@ class SolverTest extends munit.FunSuite:
       play("(declare-const s (Array Bool Int)) (assert (= s ((as const (Array Bool Int)) 0))) (check-sat)")
     }
   }
+
+  test("an equality an application lemma encoded first gets its witness when the problem negates it") {
+    // The first check encodes `a = (store a 1 (select a 1))` for the lemma on `(select a 0)`, with no
+    // witness; the assertion after it found the literal made, and the second check was sat.
+    assertEquals(
+      Session.run(io.bovel.smtlib.Parser.parse(
+        """(declare-fun a () (Array Int Bool))
+          |(assert (select (store a 1 (select a 1)) 0)) (assert (select a 0)) (check-sat)
+          |(assert (not (= a (store a 1 (select a 1))))) (check-sat)""".stripMargin
+      )),
+      List("sat", "unsat")
+    )
+  }
+
+  test("the Boolean maps of arrays") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
+      "(define-sort S () (Array Int Bool)) (declare-fun a () S) (declare-fun b () S) (declare-fun c () S) " +
+        "(declare-fun x () Int) (define-fun empty () S ((as const S) false)) " + script + " (check-sat)"
+    ))
+    assertEquals(
+      play("(assert (= c ((_ map or) a b))) (assert (select a x)) (assert (not (select c x)))"),
+      List("unsat")
+    )
+    assertEquals(play("(assert (not (= ((_ map or) a b) ((_ map or) b a))))"), List("unsat"))
+    assertEquals(play("(assert (= ((_ map or) a b) empty)) (assert (not (= a empty)))"), List("unsat"))
+    assertEquals(play("(assert (= ((_ map and) a ((_ map not) a)) c)) (assert (not (= c empty)))"), List("unsat"))
+    assertEquals(
+      play("(assert (= ((_ map implies) a b) ((as const S) true))) (assert (select a x)) (assert (not (select b x)))"),
+      List("unsat")
+    )
+    assertEquals(
+      play(
+        "(assert (= c ((_ map or) a (store empty 3 true)))) (assert (not (select a 3))) (assert (= b ((_ map and) c ((_ map not) a))))"
+      ),
+      List("sat")
+    )
+  }
