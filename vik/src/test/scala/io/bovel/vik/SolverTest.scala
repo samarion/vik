@@ -206,3 +206,49 @@ class SolverTest extends munit.FunSuite:
       List("sat", "unsat")
     )
   }
+
+  test("constant arrays") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(script))
+    val decls = "(declare-const a (Array Int Int)) (declare-const b (Array Int Int)) (declare-const i Int)"
+    // The value at every index
+    assertEquals(
+      play(s"$decls (assert (= a ((as const (Array Int Int)) 0))) (assert (= (select a i) 1)) (check-sat)"),
+      List("unsat")
+    )
+    // Under a store: the written index alone differs
+    assertEquals(
+      play(
+        s"$decls (assert (= a (store ((as const (Array Int Int)) 0) 3 1))) (assert (= (select a i) 1)) (assert (distinct i 3)) (check-sat)"
+      ),
+      List("unsat")
+    )
+    assertEquals(
+      play(s"$decls (assert (= a (store ((as const (Array Int Int)) 0) 3 1))) (assert (= (select a i) 1)) (check-sat)"),
+      List("sat")
+    )
+    // Two constant arrays are equal when their values are, with no index read
+    assertEquals(
+      play(
+        s"$decls (assert (= a ((as const (Array Int Int)) 0))) (assert (= b ((as const (Array Int Int)) 1))) (assert (= a b)) (check-sat)"
+      ),
+      List("unsat")
+    )
+    // and finitely many stores do not make one of the other
+    assertEquals(
+      play(
+        s"$decls (assert (= ((as const (Array Int Int)) 1) (store ((as const (Array Int Int)) 0) i 1))) (check-sat)"
+      ),
+      List("unsat")
+    )
+    // A set, as Stainless writes it
+    assertEquals(
+      play(
+        "(declare-const s (Array Int Bool)) (declare-const x Int) (assert (= s (store ((as const (Array Int Bool)) false) 1 true))) (assert (select s x)) (assert (distinct x 1)) (check-sat)"
+      ),
+      List("unsat")
+    )
+    // Refused over a sort a script's stores can cover
+    intercept[io.bovel.smtlib.Smt2Error] {
+      play("(declare-const s (Array Bool Int)) (assert (= s ((as const (Array Bool Int)) 0))) (check-sat)")
+    }
+  }
