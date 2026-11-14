@@ -26,6 +26,7 @@ object Printer:
     case Command.DeclareSort(name, arity) => s"(declare-sort ${symbol(name)} $arity)"
     case Command.DeclareFun(name, argSorts, sort) =>
       s"(declare-fun ${symbol(name)} (${argSorts.mkString(" ")}) $sort)"
+    case Command.DeclareMap(name, sort, _) => s"(declare-fun ${symbol(name)} () $sort)"
     case Command.DeclareDatatypes(datatypes) => // every name as the script would write it (issue 33)
       val sorts = datatypes.map(d => s"(${symbol(d.name)} 0)").mkString(" ")
       val declarations = datatypes.map { d =>

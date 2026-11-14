@@ -106,9 +106,10 @@ class LoweringTest extends munit.FunSuite:
     s.assert("(>= a 1.0)")
     assertEquals(s.checkSat(), Some(false))
 
-  test("outside the fragment: nonlinear multiplication, integer division"):
+  test("outside the fragment: nonlinear multiplication, integer division by other than a numeral"):
     intercept[Smt2Error](lowered("(declare-const x Int) (assert (<= (* x x) 1))"))
-    intercept[Unsupported](lowered("(declare-const x Int) (assert (= (div x 2) 1))"))
+    intercept[Unsupported](lowered("(declare-const x Int) (declare-const y Int) (assert (= (div x y) 1))"))
+    intercept[Unsupported](lowered("(declare-const x Int) (assert (= (mod x 0) 1))"))
     // Bit-vectors are bounded, so the operations the integers refuse are lowered there.
     lowered("(declare-const a (_ BitVec 8)) (declare-const b (_ BitVec 8)) (assert (= (bvudiv a b) a))")
     lowered("(declare-const a (_ BitVec 8)) (declare-const b (_ BitVec 8)) (assert (= (bvmul a b) a))")
