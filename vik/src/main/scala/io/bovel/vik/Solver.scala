@@ -83,7 +83,8 @@ final class Solver(val simplify: Boolean = true):
     if encoder != null && encoded.get(name).exists(_ != (argSorts, sort)) then dirty = true
     declarations(name) = (argSorts, sort)
     if encoder != null then encoded(name) = (argSorts, sort)
-    if name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!") then anyStore = true
+    if name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!") then
+      anyStore = true
 
   /** What each declared map of arrays holds at an index (see [[Pointwise]]). */
   private[vik] val maps = HashMap.empty[String, Pointwise]
@@ -1390,7 +1391,8 @@ private final class Encoder(
     val functions = Map.newBuilder[String, Model.Function]
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("array.const!") &&
+      if argSorts.isEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") &&
+        !name.startsWith("array.const!") &&
         !name.startsWith("array.map!")
     do
       // An array the assertions never read or wrote holds a default everywhere: a value all the same,
@@ -1402,7 +1404,8 @@ private final class Encoder(
     // A function into arrays: its graph, an array value per application the problem mentions (issue 27).
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") && !name.startsWith("array.const!") &&
+      if argSorts.nonEmpty && Sorts.arrow(sort).isDefined && !name.startsWith("store!") &&
+        !name.startsWith("array.const!") &&
         !name.startsWith("array.map!")
     do
       val rows = classes.keys.collect {
