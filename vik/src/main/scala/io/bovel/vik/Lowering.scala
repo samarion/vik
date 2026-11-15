@@ -81,7 +81,8 @@ private final class Lowerer:
    *  solver would take for a store by its prefix.
    */
   private def reserve(name: String): Unit =
-    if minted(name) || name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!") then
+    if minted(name) || name.startsWith("store!") || name.startsWith("array.const!") || name.startsWith("array.map!")
+    then
       throw s2.Smt2Error(s"$name: a name the lowering uses; pick another")
   private val introduced = ArrayBuffer.empty[(String, String)] // fresh constants, declared before the assertion
   private val definitions = ArrayBuffer.empty[Formula] // the assertions defining them
@@ -976,9 +977,9 @@ private final class Lowerer:
         }
       )
 
-  /** The `array.const!N` function symbol for the constant arrays of `sort`, declared
-   *  on first use like a [[storeSymbol]]: a function of the element to the
-   *  array, which the solver's array lemmas recognize by the name.
+  /** The `array.const!N` function symbol for the constant arrays of `sort`,
+   *  declared on first use like a [[storeSymbol]]: a function of the element to
+   *  the array, which the solver's array lemmas recognize by the name.
    */
   private val constSymbols = HashMap.empty[String, String]
 

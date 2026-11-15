@@ -14,9 +14,9 @@ enum Command:
   case DeclareFun(name: String, argSorts: List[String], sort: String)
   case DeclareDatatypes(datatypes: List[Datatype])
 
-  /** The declaration of a `array.map!N` symbol of sort `sort`, with what the map
-   *  holds at an index. It is the lowering's and stays declared past the `pop`
-   *  of its level, as the symbol stays the lowering's for the operator.
+  /** The declaration of a `array.map!N` symbol of sort `sort`, with what the
+   *  map holds at an index. It is the lowering's and stays declared past the
+   *  `pop` of its level, as the symbol stays the lowering's for the operator.
    */
   case DeclareMap(name: String, sort: String, pointwise: Pointwise)
   case Assert(formula: Formula)
