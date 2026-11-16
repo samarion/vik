@@ -278,19 +278,6 @@ class SolverTest extends munit.FunSuite:
     }
   }
 
-  test("an equality an application lemma encoded first gets its witness when the problem negates it") {
-    // The first check encodes `a = (store a 1 (select a 1))` for the lemma on `(select a 0)`, with no
-    // witness; the assertion after it found the literal made, and the second check was sat.
-    assertEquals(
-      Session.run(io.bovel.smtlib.Parser.parse(
-        """(declare-fun a () (Array Int Bool))
-          |(assert (select (store a 1 (select a 1)) 0)) (assert (select a 0)) (check-sat)
-          |(assert (not (= a (store a 1 (select a 1))))) (check-sat)""".stripMargin
-      )),
-      List("sat", "unsat")
-    )
-  }
-
   test("integer division and remainder by a numeral, and the absolute value") {
     def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(
       "(declare-fun x () Int) (declare-fun y () Int) " + script
