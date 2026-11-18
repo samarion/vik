@@ -60,3 +60,7 @@ class InteractiveTest extends munit.FunSuite:
     val proof = responses.drop(4).mkString("\n")
     assert(proof.startsWith("\""), proof.take(200))
     assert(proof.contains("theorem no_model"), proof.take(2000))
+
+  test("a model quotes the symbols that are not simple"):
+    val responses = serve("(declare-const |eq[A]| Int) (assert (= |eq[A]| 3)) (check-sat) (get-model)")
+    assert(responses.tail.mkString(" ").contains("|eq[A]|"), responses.mkString("\n"))

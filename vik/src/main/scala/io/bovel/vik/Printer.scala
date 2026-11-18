@@ -17,8 +17,12 @@ object Printer:
     if name.startsWith("(_ is ") then
       s"(_ is ${symbol(name.stripPrefix("(_ is ").stripSuffix(")"))})" // its constructor quoted
     else if name.startsWith("(_ ") || name.startsWith("(as ") || name.startsWith("|") then name
-    else if name.exists(c => c == ' ' || c == '(' || c == ')') then s"|$name|"
+    else if name.isEmpty || name.head.isDigit || !name.forall(simple) then s"|$name|"
     else name
+
+  // The characters of a simple symbol, besides letters and digits (SMT-LIB 2.6, 3.1): `[` of
+  // Inox's `eqBag[A]` is not one, and a model that wrote it bare would not be read back.
+  private def simple(c: Char): Boolean = (c < 128 && c.isLetterOrDigit) || "~!@$%^&*_-+=<>.?/".contains(c)
 
   def print(script: Script): String = script.commands.map(print).mkString("", "\n", "\n")
 
