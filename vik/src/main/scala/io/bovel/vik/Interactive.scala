@@ -54,7 +54,7 @@ final class Interactive(proofs: Boolean = false):
           if !proofs then List("(error \"proofs need the --proofs flag\")")
           else
             session.leanProof() match
-              case Right(lean) => List(Interactive.quote(lean))
+              case Right(lean) => List(Interactive.quote(Interactive.leanFile(lean)))
               case Left(why) => List(s"(error ${Interactive.quote(why)})")
         case _ =>
           val responses = session.run(text)
@@ -130,6 +130,12 @@ object Interactive:
     text.stripPrefix("(").stripSuffix(")").trim.split("\\s+").toList match
       case "set-option" :: key :: value :: _ => Some((key, value))
       case _ => None
+
+  /** The proof terms of [[Session.leanProof]] as a Lean file that `lake env lean` checks in
+   *  `proofs/lean`, as the corpus runner writes them.
+   */
+  def leanFile(proof: String): String =
+    s"import Vik\n\nnamespace Vik.Low.Exported.Proof\n\nopen Vik.Low Vik.Surf Vik.Clausal\n\n$proof\nend Vik.Low.Exported.Proof\n"
 
   /** `s` as an SMT-LIB string literal, its quotes doubled. */
   def quote(s: String): String = "\"" + s.replace("\"", "\"\"") + "\""
