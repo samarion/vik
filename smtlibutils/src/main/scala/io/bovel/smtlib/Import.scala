@@ -61,6 +61,14 @@ object Import:
     case List(name) if Logic.standard.contains(name) => name
     case _ =>
       if text.contains("declare-datatype") then "QF_DT"
+      // Arrays first: a script with `eval` or `get-value` on a map or a constant array that z3 refuses under
+      // every logic is still an array script, not an integer one.
+      else if text.contains("(Array ") then
+        val functions = "\\(declare-fun \\S+ \\([^)]".r.findFirstIn(text).isDefined || text.contains("declare-sort")
+        if "\\(_ bv\\d+ \\d+\\)|\\(_ BitVec".r.findFirstIn(text).isDefined then if functions then "QF_AUFBV" else "QF_ABV"
+        else if "\\bInt\\b".r.findFirstIn(text).isDefined then if functions then "QF_AUFLIA" else "QF_ALIA"
+        else if functions then "QF_AUFLIA"
+        else "QF_AX"
       else if "\\(_ bv\\d+ \\d+\\)|\\(_ BitVec".r.findFirstIn(text).isDefined then "QF_BV"
       else if "\\bInt\\b".r.findFirstIn(text).isDefined then
         if "\\(declare-fun \\S+ \\([^)]".r.findFirstIn(text).isDefined || text.contains("declare-sort") then "QF_UFLIA"
