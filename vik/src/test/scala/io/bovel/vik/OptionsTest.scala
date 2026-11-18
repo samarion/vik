@@ -37,16 +37,14 @@ class OptionsTest extends munit.FunSuite:
     assertEquals(Session(checkModels = true).play(lowered), List("sat", "sat"))
 
   test("check-models: a model that fails its check answers unknown, with the error and the reason"):
-    // Issue 137: the class of `(+ a 1)` gets a value of its own in the model. To replace by another model
-    // that fails, once that is fixed.
+    // Issue 126, from corpus/QF_DT/cvc5/regress0-datatypes__boolean-terms-rewrite.cvc.smt2 (the failure needs
+    // its name of the sort): the bit-vector field of `x` is out of its range. To replace by another model that
+    // fails, once that is fixed.
     val script = """
       (set-option :check-models true)
-      (declare-datatype P ((mk (f Int))))
-      (declare-const a Int)
-      (declare-const x P)
-      (assert (= x (mk (+ a 1))))
-      (assert (= a 5))
-      (assert ((_ is mk) x))
+      (declare-datatypes ((|R_(_ BitVec 1)| 0)) (((mk (b (_ BitVec 1))))))
+      (declare-fun x () |R_(_ BitVec 1)|)
+      (assert (= false (= (= x (mk #b0)) (= x (mk #b1)))))
       (check-sat)
       (get-info :reason-unknown)
       (get-model)"""

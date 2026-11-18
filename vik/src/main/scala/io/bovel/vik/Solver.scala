@@ -1397,6 +1397,15 @@ private final class Encoder(
                 datatypes.find(_.name == sort) match
                   case Some(d) => builtValue(d, eg.newClass(), Set.empty) // never reached the e-graph: free
                   case None => elementOf(sort, eg.newClass())
+    // A linear term values its class too, from the values of its terms: an argument `(+ a 1)` of a
+    // constructor is a leaf of the e-graph without a variable of the simplex, and alone in its class
+    // when nothing else reads the field, where a fresh number made `x = (mk (+ a 1))` false (issue 137).
+    // The fresh numbers drawn from here on are past these values as well.
+    for case (t @ Term.Linear(_, _), c) <- classes do
+      val v = asRational(valueOfTerm(t, sortOf(t)))
+      if sortOf(t) == "Real" then realClassValues.getOrElseUpdate(eg.find(c), v)
+      else classValues.getOrElseUpdate(eg.find(c), v.num)
+      nextFresh = nextFresh.max(v.floor + 1)
     // An array's value, per e-class: its default and the indices its class was read at — its own
     // selects, the ones of every array equal to it, the write of a store it equals.
     def arrayValue(array: EClassId, sort: String): Term =

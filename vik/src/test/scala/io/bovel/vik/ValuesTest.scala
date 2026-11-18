@@ -26,6 +26,26 @@ class ValuesTest extends munit.FunSuite:
       List("sat", "((ite!1 5) (x 1))")
     )
 
+  test("a constructor's linear argument is computed from its terms"):
+    // Its class, alone and without a variable of the simplex, got a fresh number: `x = (mk 1)` (issue 137).
+    assertEquals(
+      run("""(declare-datatype P ((mk (f Int)))) (declare-const a Int) (declare-const x P)
+             (assert (= x (mk (+ a 1)))) (assert (= a 5)) (check-sat) (get-value (x (f x) (= x (mk (+ a 1)))))"""),
+      List("sat", "((x (mk 6)) ((f x) 6) ((= x (mk (+ a 1))) true))")
+    )
+    // A lowered bit-vector operation is such a term.
+    assertEquals(
+      run("""(declare-datatype P ((mk (f (_ BitVec 2))))) (declare-const a (_ BitVec 2)) (declare-const x P)
+             (assert (= x (mk (bvnot a)))) (assert (= a #b01)) (check-sat) (get-value (x))"""),
+      List("sat", "((x (mk #b10)))")
+    )
+    // A number invented for another value's field is past it: `y`'s field is not the 6 of `x`'s.
+    assertEquals(
+      run("""(declare-datatype P ((mk (f Int)))) (declare-const a Int) (declare-const x P) (declare-const y P)
+             (assert (= x (mk (+ a 1)))) (assert (= a 5)) (assert (distinct x y)) (check-sat) (get-value (x y))"""),
+      List("sat", "((x (mk 6)) (y (mk 7)))")
+    )
+
   test("bit-vectors inside datatypes and arrays are written as bit-vectors"):
     // At their fields' sorts, and over a constant array of the script's sort (issue 47).
     assertEquals(
