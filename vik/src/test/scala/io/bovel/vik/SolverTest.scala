@@ -272,10 +272,51 @@ class SolverTest extends munit.FunSuite:
       ),
       List("unsat")
     )
-    // Refused over a sort a script's stores can cover
-    intercept[io.bovel.smtlib.Smt2Error] {
-      play("(declare-const s (Array Bool Int)) (assert (= s ((as const (Array Bool Int)) 0))) (check-sat)")
-    }
+    // Over a finite sort: an index beyond the writes while the stores leave one, every value once they
+    // may fill the sort. Two writes cover `Bool`; four cover a `(_ BitVec 2)`, three do not; and two
+    // constant arrays of different values differ at an index two writes leave (z3test's
+    // const_array_store_chain_unsat).
+    assertEquals(
+      play(
+        "(declare-const s (Array Bool Int)) (assert (= s (store (store ((as const (Array Bool Int)) 0) true 1) false 1))) (assert (= s ((as const (Array Bool Int)) 1))) (check-sat)"
+      ),
+      List("sat")
+    )
+    assertEquals(
+      play(
+        "(declare-const s (Array Bool Int)) (assert (= s (store ((as const (Array Bool Int)) 0) true 1))) (assert (= s ((as const (Array Bool Int)) 1))) (check-sat)"
+      ),
+      List("unsat")
+    )
+    def filled(n: Int, width: Int) = (0 until n).foldLeft(s"((as const (Array (_ BitVec $width) Int)) 0)")((a, k) =>
+      s"(store $a (_ bv$k $width) 1)"
+    )
+    assertEquals(
+      play(s"(assert (= ${filled(3, 2)} ((as const (Array (_ BitVec 2) Int)) 1))) (check-sat)"),
+      List("unsat")
+    )
+    assertEquals(play(s"(assert (= ${filled(4, 2)} ((as const (Array (_ BitVec 2) Int)) 1))) (check-sat)"), List("sat"))
+    // Indices the search may make equal leave room for the index beyond them
+    assertEquals(
+      play(
+        "(declare-const i (_ BitVec 2)) (declare-const j (_ BitVec 2)) (declare-const k (_ BitVec 2)) (declare-const l (_ BitVec 2)) " +
+          "(assert (= (store (store (store (store ((as const (Array (_ BitVec 2) Int)) 0) i 1) j 1) k 1) l 1) ((as const (Array (_ BitVec 2) Int)) 1))) " +
+          "(check-sat) (assert (= i j)) (check-sat)"
+      ),
+      List("sat", "unsat")
+    )
+    assertEquals(
+      play(
+        "(declare-const x (_ BitVec 8)) (declare-const y (_ BitVec 8)) (declare-const i (_ BitVec 2)) (declare-const j (_ BitVec 2)) " +
+          "(assert (distinct x y)) (assert (= (store ((as const (Array (_ BitVec 2) (_ BitVec 8))) x) i x) (store ((as const (Array (_ BitVec 2) (_ BitVec 8))) y) j y))) (check-sat)"
+      ),
+      List("unsat")
+    )
+    // A 12-bit sort, which was refused: neither small nor large enough for one of the two alone
+    assertEquals(
+      play(s"(assert (= ${filled(5, 12)} ((as const (Array (_ BitVec 12) Int)) 1))) (check-sat)"),
+      List("unsat")
+    )
   }
 
   test("integer division and remainder by a numeral, and the absolute value") {
@@ -388,6 +429,17 @@ class SolverTest extends munit.FunSuite:
     assertEquals(
       play(
         "(assert (= c ((_ map or) a (store empty 3 true)))) (assert (not (select a 3))) (assert (= b ((_ map and) c ((_ map not) a))))"
+      ),
+      List("sat")
+    )
+  }
+
+  test("a map over a Boolean index is read at both values") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(script))
+    assertEquals(play("(declare-const a (Array Bool Bool)) (assert (= a ((_ map not) a))) (check-sat)"), List("unsat"))
+    assertEquals(
+      play(
+        "(declare-const a (Array Bool Bool)) (declare-const b (Array Bool Bool)) (assert (= b ((_ map not) a))) (assert (select a true)) (assert (select b false)) (check-sat)"
       ),
       List("sat")
     )
