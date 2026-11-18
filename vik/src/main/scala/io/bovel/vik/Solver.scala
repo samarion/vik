@@ -854,30 +854,52 @@ private final class Encoder(
   /** An index of `sort` no store writes at, for the sorts indexing a constant
    *  array: reading there carries the value of a constant array through the
    *  stores over it, so that `((as const A) 0)` with finitely many writes is
-   *  not `((as const A) 1)`. There is one when the sort has more values than a
-   *  script has stores; a constant array over another sort is refused.
+   *  not `((as const A) 1)`. There is one while the sort has more values than
+   *  the stores' indices; a bit-vector sort they may fill is listed instead
+   *  (see [[settling]]), and a constant array over another finite sort is
+   *  refused.
    */
   private val beyondIndices = scala.collection.mutable.HashMap.empty[String, Term]
   private val beyondDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
+
+  /** How many store indices the index beyond the writes of each sort is apart
+   *  from, and the bit-vector sorts whose stores were too many for it, now read
+   *  at their every value.
+   */
+  private val beyondApart = scala.collection.mutable.HashMap.empty[String, Int]
+  private val listedSorts = scala.collection.mutable.HashSet.empty[String]
 
   private def beyond(sort: String): Term = beyondIndices.getOrElseUpdate(
     sort, {
       var name = s"beyond!${beyondIndices.size}"
       while declarations.contains(name) || introduced.contains(name) do name += "'"
       sort match
-        case Encoder.bitVector(width) if width.nn.toInt >= 16 =>
+        case Encoder.bitVector(width) =>
           introduced(name) = "Int"
           val w = Term.Const(name)
           clauses += Array(lit(Formula.Le(Term.Num(0), w)))
           clauses += Array(lit(Formula.Le(w, Term.Num(BigInt(2).pow(width.nn.toInt) - 1))))
           w
-        case Encoder.bitVector(_) => throw io.bovel.smtlib.Smt2Error(s"a constant array over the small sort $sort")
-        case _ if finite(sort) => throw io.bovel.smtlib.Smt2Error(s"a constant array over the finite sort $sort")
+        case _ if finite(sort) =>
+          throw io.bovel.smtlib.Smt2Error(s"a constant array or a map over the finite sort $sort")
         case _ =>
           introduced(name) = sort
           Term.Const(name)
     }
   )
+
+  /** The indices that settle a constant array or a map of index sort `sort`
+   *  away from the indices read: the index beyond the writes, and every value
+   *  of the sort as well once the stores' indices may fill it (see
+   *  [[arrayLemmas]]: four writes fill a `(_ BitVec 2)`, and no index is left
+   *  beyond them). `Bool`'s two values are listed from the start.
+   */
+  private def settling(sort: String): List[Term] = sort match
+    case "Bool" => List(Term.boolean(Formula.True), Term.boolean(Formula.False))
+    case Encoder.bitVector(width) if listedSorts(sort) => beyond(sort) :: values(width.nn.toInt)
+    case _ => List(beyond(sort))
+
+  private def values(width: Int): List[Term] = List.tabulate(1 << width)(k => Term.Num(BigInt(k)))
 
   private val arrayWritesDone = scala.collection.mutable.HashSet.empty[Term]
   private val arrayReadsDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
@@ -895,16 +917,27 @@ private final class Encoder(
         case Term.App(f, List(j)) if Sorts.arrow(sortOf(f)).isDefined => index(sortOf(f), j)
         case _ => ()
     for s <- stores do index(sortOf(s), s.args(1))
-    // The index beyond the writes (see [[beyond]]) is none of the written ones.
+    // The index beyond the writes (see [[beyond]]) is none of the written ones, while a value is left
+    // for it: a bit-vector sort of `2^n` values takes `2^n - 1` indices apart from it, and its arrays
+    // are read at every value from then on (see [[settling]]). Fewer indices than values is all it
+    // needs, whatever the indices are: two of them may be equal, and the sort then has even more room.
     for s <- stores do
       val indexSort = Sorts.arrow(sortOf(s)).get._1.head
       for w <- beyondIndices.get(indexSort) do
-        if beyondDone.add((w, s.args(1))) then clauses += Array(lit(equalAt(indexSort, w, s.args(1))).neg)
+        if beyondDone.add((w, s.args(1))) then
+          val room = indexSort match
+            case Encoder.bitVector(width) => BigInt(2).pow(width.nn.toInt) - 1
+            case _ => BigInt(-1) // an infinite sort
+          val apart = beyondApart.getOrElse(indexSort, 0)
+          if room >= 0 && apart >= room then listedSorts += indexSort
+          else
+            beyondApart(indexSort) = apart + 1
+            clauses += Array(lit(equalAt(indexSort, w, s.args(1))).neg)
     // A constant array holds its value at every index of its sort: `const(d)(j) = d`.
     for case c @ Term.App(Term.Const(name), List(d)) <- classes.keys.toList if name.startsWith("array.const!") do
       val sort = sortOf(c)
       val elementSort = Sorts.applied(sort, 1)
-      index(sort, beyond(Sorts.arrow(sort).get._1.head))
+      settling(Sorts.arrow(sort).get._1.head).foreach(index(sort, _))
       for j <- indices.getOrElse(sort, Nil).toList do
         step()
         if arrayReadsDone.add((c, j)) then clauses += Array(lit(equalAt(elementSort, selectTerm(c, j), d)))
@@ -916,7 +949,7 @@ private final class Encoder(
       val pointwise = maps.getOrElse(name, throw io.bovel.smtlib.Smt2Error(s"$name: a map with no operator"))
       val sort = sortOf(m)
       val elementSort = Sorts.applied(sort, 1)
-      index(sort, beyond(Sorts.arrow(sort).get._1.head))
+      settling(Sorts.arrow(sort).get._1.head).foreach(index(sort, _))
       for j <- (sort :: arrays.map(sortOf)).distinct.flatMap(indices.getOrElse(_, Nil)).distinct do
         step()
         if arrayReadsDone.add((m, j)) then
