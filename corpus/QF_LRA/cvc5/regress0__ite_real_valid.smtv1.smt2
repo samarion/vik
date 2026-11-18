@@ -1,0 +1,7 @@
+; From cvc5: regress0/ite_real_valid.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_LRA)
+(declare-fun x () Real)
+(declare-fun b () Bool)
+(check-sat-assuming ( (not (=> (= x (/ (ite b 0 1) 1)) (>= x 0.0))) ))

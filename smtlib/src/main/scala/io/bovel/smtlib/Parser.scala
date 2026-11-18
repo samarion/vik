@@ -64,7 +64,9 @@ final class Parser:
   private val owner = HashMap.empty[String, String] // a parametric constructor or selector to its datatype
   private val instantiated = scala.collection.mutable.HashSet.empty[String] // datatype instances, by sort text
   private val pending = scala.collection.mutable.ArrayBuffer.empty[Command] // instances' declarations
-  private var sortSubst: Map[String, SExpr] = Map.empty // a template's parameters, while instantiating
+  // A template's parameters, while instantiating, bound to sorts already read: a parameter may be named
+  // like a sort of the script, which it then shadows (issue 152).
+  private var sortSubst: Map[String, Sort] = Map.empty
 
   // A declaration or a definition belongs to the level it was made at and goes with the level's `pop`,
   // unless `:global-declarations` is true (issue 40): one list of undos per open level.
@@ -85,8 +87,11 @@ final class Parser:
   private def push(levels: Int): Unit =
     for _ <- 1 to levels do scopes += scala.collection.mutable.ArrayBuffer.empty
 
+  // A `pop` of more levels than are open is refused whole, by the session, which answers an error for it
+  // (issue 178): nothing is undone here either.
   private def pop(levels: Int): Unit =
-    for _ <- 1 to (levels min scopes.length) do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
+    if levels <= scopes.length then
+      for _ <- 1 to levels do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
 
   // `(exit)` ends the script: what follows is not read (issue 52), as z3 and cvc5 stop there.
   private var exited = false
@@ -97,6 +102,7 @@ final class Parser:
       val commands = command(s)
       val out = pending.toList ++ commands
       pending.clear()
+      wellFounded(out.collect { case Command.DeclareDatatypes(datatypes) => datatypes }.flatten)
       out
   })
 
@@ -116,9 +122,13 @@ final class Parser:
       sortParameters += name
       Nil
     case SList(SSymbol("define-sort") :: SSymbol(name) :: SList(params) :: body :: Nil) =>
+      val names = params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad parameter $other") }
+      // The body is read where the definition is made, before its name exists, as z3 and cvc5 read it: a
+      // body that leads back to the name would expand without end at each use (issue 177).
+      if leadsTo(body, names.toSet, name, Set.empty) then
+        throw Smt2Error(s"unknown sort $name in its own definition (define-sort $name)")
       undoable(sortDefinitions, name)
-      sortDefinitions(name) =
-        (params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad parameter $other") }, body)
+      sortDefinitions(name) = (names, body)
       Nil
     case SList(SSymbol("declare-fun") :: SSymbol(name) :: SList(args) :: s :: Nil) => declare(name, args, s)
     case SList(SSymbol("define-const") :: SSymbol(name) :: s :: body :: Nil) => // a `define-fun` of no parameter
@@ -193,7 +203,11 @@ final class Parser:
       List(Command.CheckSatAssuming(assumptions.map(assertion)))
     case SList(SSymbol("check-sat") :: assumptions) => // z3's shorthand
       List(Command.CheckSatAssuming(assumptions.map(assertion)))
-    case SList(SSymbol("reset-assertions") :: Nil) => List(Command.ResetAssertions)
+    case SList(SSymbol("reset-assertions") :: Nil) =>
+      // The levels go, and the declarations made in them stay, as the session keeps them: their undos go
+      // unrun (issue 178).
+      scopes.clear()
+      List(Command.ResetAssertions)
     case SList(SSymbol("reset") :: Nil) =>
       functions.clear()
       macros.clear()
@@ -371,7 +385,7 @@ final class Parser:
               undoable(instanceSymbols, instanceName)
               instanceSymbols += instanceName
               val saved = sortSubst
-              sortSubst = params.zip(actual).toMap
+              sortSubst = params.zip(actualSorts).toMap
               try
                 poly match
                   case Poly.Fun(_, as, r) =>
@@ -406,7 +420,7 @@ final class Parser:
       undoable(instantiated, text)
       instantiated += text
       val saved = sortSubst
-      sortSubst = params.zip(args.map(sexprOf)).toMap
+      sortSubst = params.zip(args).toMap
       try
         val datatype = Datatype(
           text,
@@ -441,6 +455,7 @@ final class Parser:
    *  `(_ is C)` : `D -> Bool`).
    */
   private def declareDatatypes(declarations: List[(String, List[SExpr])]): Command =
+    for (name, constructors) <- declarations do distinct(name, constructors)
     for (name, _) <- declarations do // named first: the fields read below may mention them, and instantiate
       undoable(datatypeNames, name)
       datatypeNames += name
@@ -464,6 +479,40 @@ final class Parser:
     datatypes.foreach(fields)
     Command.DeclareDatatypes(datatypes)
 
+  /** Refuses a datatype that declares a constructor or a selector twice, as z3
+   *  and cvc5 do (issue 146): the second declaration would replace the first, a
+   *  selector `f` of two constructors being one function symbol here.
+   */
+  private def distinct(datatype: String, constructors: List[SExpr]): Unit =
+    val names = constructors.collect { case SList(SSymbol(constructor) :: _) => constructor }
+    val selectors = constructors.collect { case SList(_ :: fields) => fields }.flatten
+      .collect { case SList(SSymbol(selector) :: _) => selector }
+    for name <- names.diff(names.distinct).headOption do
+      throw Smt2Error(s"$name: a constructor declared twice in the datatype $datatype")
+    for name <- selectors.diff(selectors.distinct).headOption do
+      throw Smt2Error(s"$name: a selector declared twice in the datatype $datatype")
+
+  /** Refuses datatypes that are not well-founded, as SMT-LIB asks and as z3 and
+   *  cvc5 do (issue 147): a datatype has values only if one of its constructors
+   *  takes fields that all have some. `datatypes` are the ones a command
+   *  declared, with the instances of parametric datatypes it made — a
+   *  parametric datatype is judged there, instance by instance. The sorts
+   *  declared before have values, and so the least fixpoint is over these: the
+   *  datatypes left once no other can be given a value have none. An array has
+   *  values when its indices and its elements do, which is the rule of the two.
+   */
+  private def wellFounded(datatypes: List[Datatype]): Unit =
+    def without(open: List[Datatype]): List[Datatype] =
+      val names = open.map(_.name).toSet
+      def inhabited(s: Sort): Boolean = s match
+        case Sort.Named(name) => !names(name)
+        case Sort.Array(index, element) => inhabited(index) && inhabited(element)
+        case _ => true
+      val rest = open.filterNot(_.constructors.exists(_.selectors.forall((_, s) => inhabited(s))))
+      if rest.length == open.length then open else without(rest)
+    for datatype <- without(datatypes).headOption do
+      throw Smt2Error(s"the datatype ${datatype.name} is not well-founded: none of its constructors has a value")
+
   /** Makes a datatype's constructors, selectors and testers known. */
   private def register(datatype: Datatype): Unit =
     val d = Sort.Named(datatype.name)
@@ -485,6 +534,7 @@ final class Parser:
    */
   private def template(name: String, params: List[SExpr], constructors: List[SExpr]): Unit =
     val ps = params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad sort parameter $other") }
+    distinct(name, constructors)
     undoable(templates, name)
     templates(name) = (ps, constructors)
     val self = SList(SSymbol(name) :: ps.map(SSymbol(_)))
@@ -507,7 +557,7 @@ final class Parser:
         case other => throw Smt2Error(s"bad constructor $other")
 
   private def sort(s: SExpr): Sort = s match
-    case SSymbol(name) if sortSubst.contains(name) => sort(sortSubst(name))
+    case SSymbol(name) if sortSubst.contains(name) => sortSubst(name)
     case SSymbol(name) if sortDefinitions.get(name).exists(_._1.isEmpty) => sort(sortDefinitions(name)._2)
     case SList(SSymbol(name) :: args) if sortDefinitions.contains(name) =>
       val (params, body) = sortDefinitions(name)
@@ -531,6 +581,18 @@ final class Parser:
         throw Smt2Error(s"the sort $name takes ${declaredSorts(name)} sort arguments")
       Sort.Named(s"($name ${args.map(sort(_).text).mkString(" ")})")
     case other => Sort.Named(other.toString) // rejected by `check` where a symbol is declared
+
+  /** Whether the sort written `body`, where the names in `bound` are
+   *  parameters, leads to the sort `name`: names it, or names a `define-sort`
+   *  whose body does, through any number of them (`seen`: the ones followed).
+   */
+  private def leadsTo(body: SExpr, bound: Set[String], name: String, seen: Set[String]): Boolean = body match
+    case SSymbol(s) if bound(s) => false
+    case SSymbol(s) if s == name => true
+    case SSymbol(s) =>
+      !seen(s) && sortDefinitions.get(s).exists((params, b) => leadsTo(b, params.toSet, name, seen + s))
+    case SList(items) => items.exists(leadsTo(_, bound, name, seen))
+    case _ => false
 
   /** Whether the script declared the sort `name`: a sort, a datatype, or an
    *  instance of a sort constructor or of a parametric datatype.

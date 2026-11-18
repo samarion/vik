@@ -1,0 +1,7 @@
+; From cvc5: regress0/arrays/issue4780-3.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_ABV)
+(set-info :status sat)
+(declare-const bv_25-0 (_ BitVec 25))
+(declare-const arr0 (Array (_ BitVec 25) Bool))
+(assert (select arr0 (bvnot bv_25-0)))
+(check-sat)

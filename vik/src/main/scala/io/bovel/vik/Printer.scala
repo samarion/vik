@@ -5,6 +5,8 @@ import io.bovel.smtlib.Datatype
 /** Prints lowered scripts, formulas and terms back to SMT-LIB 2 text (one
  *  command per line), e.g. to hand the problem the solver plays to another
  *  solver, or to show it (`io.bovel.vik.lower`, `get-assertions`, the models).
+ *  One command is not SMT-LIB's: `(assert-global F)`, an assertion below every
+ *  level ([[Command.AssertGlobal]]), which the standard has no way to write.
  */
 object Printer:
   /** A symbol as SMT-LIB writes it: quoted when it holds a character a simple
@@ -36,6 +38,7 @@ object Printer:
       }.mkString(" ")
       s"(declare-datatypes ($sorts) ($declarations))"
     case Command.Assert(formula) => s"(assert ${print(formula)})"
+    case Command.AssertGlobal(formula) => s"(assert-global ${print(formula)})" // VIK's own: see the command
     case Command.AssertNamed(name, formula) => s"(assert (! ${print(formula)} :named $name))"
     case Command.CheckSat => "(check-sat)"
     case Command.GetUnsatCore => "(get-unsat-core)"

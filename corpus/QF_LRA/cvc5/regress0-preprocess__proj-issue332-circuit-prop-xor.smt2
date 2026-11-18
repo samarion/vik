@@ -1,0 +1,12 @@
+; From cvc5: regress0/preprocess/proj-issue332-circuit-prop-xor.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; logic: QF_LRA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_LRA)
+(set-option :produce-proofs true)
+(declare-const x Real)
+(declare-const x4 Real)
+(declare-const x8 Bool)
+(assert (<= x4 x))
+(assert (not (xor (> x4 x) x8)))
+(set-info :status sat)
+(check-sat)

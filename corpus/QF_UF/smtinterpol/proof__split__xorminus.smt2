@@ -1,0 +1,32 @@
+; From smtinterpol: proof/split/xorminus.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-option :model-check-mode true)
+
+(set-logic QF_UF)
+(declare-fun p () Bool)
+(declare-fun q () Bool)
+(declare-fun r () Bool)
+
+(push 1)
+(assert (not (xor p q)))
+(assert (not p))
+(assert q)
+
+(set-info :status unsat)
+(check-sat)
+(set-option :print-terms-cse false)
+(get-proof)
+(pop 1)
+
+(push 1)
+(assert (not (xor p q)))
+(assert p)
+(assert (not q))
+
+(set-info :status unsat)
+(check-sat)
+(set-option :print-terms-cse false)
+(get-proof)
+(pop 1)

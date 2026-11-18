@@ -41,7 +41,7 @@ object Solver:
     /** The fuel is spent (see [[Solver.solve]]), or a theory gave up. */
     case Unknown
 
-final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int = 100):
+final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int = 100, proofs: Boolean = false):
   import Solver.Result
 
   private val Decision = -1
@@ -136,6 +136,11 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
       vmtfPrev = java.util.Arrays.copyOf(vmtfPrev, n / 2)
       vmtfNext = java.util.Arrays.copyOf(vmtfNext, n / 2)
       vmtfStamp = java.util.Arrays.copyOf(vmtfStamp, n / 2)
+      if proof != null then
+        reasonStep = java.util.Arrays.copyOf(reasonStep, n / 2)
+        unitStep = java.util.Arrays.copyOf(unitStep, n / 2)
+        java.util.Arrays.fill(reasonStep, v, n / 2, -1)
+        java.util.Arrays.fill(unitStep, v, n / 2, -1)
     watches += ArrayBuffer.empty
     watches += ArrayBuffer.empty
     vmtfPrev(v) = vmtfTail
@@ -194,13 +199,21 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
   /** Adds a clause; only before the search. */
   def addClause(lits: Lit*): Unit = addClause(lits.toArray)
 
-  def addClause(lits: Array[Lit]): Unit =
+  def addClause(lits: Array[Lit]): Unit = addClause(lits, null)
+
+  /** Adds a clause, with what it stands for in the proof (see
+   *  [[Proof.Step.Input]]).
+   */
+  def addClause(lits: Array[Lit], origin: AnyRef | Null): Unit =
     backtrack(0) // a clause added between two solves leaves the previous model
     val c = lits.distinct
     if c.exists(l => c.contains(l.neg)) then return // a tautology
+    val p = proof
+    if p != null then stepOf.put(c, p.add(Proof.Step.Input(c.clone(), origin)))
     // Literals false at level 0 are false for good: move the others first, and treat the clause accordingly.
     val alive = c.count(l => value(l.index) >= 0)
     if alive == 0 then
+      if p != null && !unsat then p.conclusion = refute(c)
       unsat = true
       return
     var i = 0
@@ -239,7 +252,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
         val conflict = visitWatchers(p.neg)
         if conflict != null then return conflict
       theory.propagate() match
-        case Theory.Result.Conflict(reasons) => return reasons.map(_.neg).toArray
+        case Theory.Result.Conflict(reasons) => return lemma(reasons.map(_.neg).toArray)
         case Theory.Result.Unknown =>
           gaveUp = true
           return null
@@ -252,7 +265,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
             if value(l.index) == 0 then
               enqueue(l, FromTheory)
               progress = true
-            else if value(l.index) < 0 then return theoryClause(l) // implied, yet false: a conflict
+            else if value(l.index) < 0 then return lemma(theoryClause(l)) // implied, yet false: a conflict
             i += 1
           if !progress then return null
     null
@@ -310,8 +323,72 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
    */
   private def reasonClause(lit: Lit): Array[Lit] =
     val why = reason(lit.variable)
-    val clause = if why == FromTheory then theoryClause(lit) else clauses(why)
+    if why != FromTheory then clauses(why)
+    else
+      val p = proof
+      if p == null then theoryClause(lit)
+      else if reasonStep(lit.variable) >= 0 then p.steps(reasonStep(lit.variable)).clause
+      else
+        val clause = theoryClause(lit)
+        reasonStep(lit.variable) = p.add(Proof.Step.Lemma(clause.clone(), theory.certificate()))
+        clause
+
+  /** The proof, when the solver was asked for one (`proofs`): the clauses, the
+   *  theory lemmas and the derivations so far, and the conclusion of the last
+   *  `Unsat`.
+   */
+  val proof: Proof | Null = if proofs then Proof() else null
+
+  /** For the proof: the step of each clause of the database and of each theory
+   *  lemma met (by identity), the step of the theory lemma explaining each
+   *  variable assigned by the theory (while it is), and the step of the unit
+   *  clause of each variable assigned at level 0 (once derived).
+   */
+  private val stepOf = java.util.IdentityHashMap[Array[Lit], Integer]()
+  private var reasonStep = if proofs then Array.fill(numVars)(-1) else new Array[Int](0)
+  private var unitStep = if proofs then Array.fill(numVars)(-1) else new Array[Int](0)
+
+  /** A clause of the theory, a conflict, recorded as a lemma of the proof. */
+  private def lemma(clause: Array[Lit]): Array[Lit] =
+    val p = proof
+    if p != null then stepOf.put(clause, p.add(Proof.Step.Lemma(clause.clone(), theory.certificate())))
     clause
+
+  /** The step of the reason of the assigned `v`, once [[reasonClause]] has
+   *  given it.
+   */
+  private def reasonId(v: Var): Int =
+    if reason(v) == FromTheory then reasonStep(v) else stepOf.get(clauses(reason(v))).nn.intValue
+
+  /** The steps of the unit clauses of the level-0 variables `vars`, derived
+   *  (with those they need, in trail order) where not done yet.
+   */
+  private def units(vars: Iterable[Var]): Iterable[Int] =
+    val p = proof.nn
+    val needed = scala.collection.mutable.HashSet.empty[Var]
+    val todo = ArrayBuffer.from(vars)
+    while todo.nonEmpty do
+      val v = todo.remove(todo.length - 1)
+      if unitStep(v) < 0 && needed.add(v) then
+        for l <- reasonClause(Lit(v, value(Lit(v).index) > 0)) if l.variable != v do todo += l.variable
+    // In trail order: a unit's reason only has variables assigned before it.
+    for lit <- trail.iterator.takeWhile(l => level(l.variable) == 0) if needed(lit.variable) do
+      val v = lit.variable
+      val hints = ArrayBuffer.empty[Int]
+      for l <- reasonClause(lit) if l.variable != v do hints += unitStep(l.variable)
+      hints += reasonId(v)
+      unitStep(v) = p.add(Proof.Step.Derived(Array(lit), hints.distinct.toArray))
+    vars.map(unitStep(_))
+
+  /** The derivation of the empty clause from `clause`, whose literals are all
+   *  false at level 0.
+   */
+  private def refute(clause: Array[Lit]): Int =
+    val hints = units(clause.map(_.variable).distinct).toArray :+ stepOf.get(clause).nn.intValue
+    proof.nn.add(Proof.Step.Derived(Array.empty, hints))
+
+  /** The hints of the clause the last [[analyze]] learned. */
+  private var learnedHints = Array.empty[Int]
 
   /** Conflict analysis: from a false clause, the first unique implication point
    *  clause (its first literal is the one of the current level) and the level
@@ -325,10 +402,14 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
     var first = 0 // literals of `clause` to resolve in: all of the conflict clause, then all but the implied one
     var p: Lit = Lit(0) // the literal resolved on (set before use)
     var index = trail.length - 1
+    val logging = proof != null
+    val resolved = if logging then ArrayBuffer(stepOf.get(conflict).nn.intValue) else null // last first
+    val zeros = if logging then scala.collection.mutable.HashSet.empty[Var] else null // level-0 variables met
     while
       for i <- first until clause.length do
         val q = clause(i)
         val v = q.variable
+        if logging && level(v) == 0 then zeros.nn += v
         if !seen(v) && level(v) > 0 then
           seen(v) = true
           if level(v) == decisionLevel then counter += 1 else learned += q
@@ -342,7 +423,9 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
       counter > 0
     do
       clause = reasonClause(p)
+      if logging then resolved.nn += reasonId(p.variable)
       first = 1
+    if logging then learnedHints = (units(zeros.nn).toArray ++ resolved.nn.reverseIterator).distinct
     learned(0) = p.neg
     for l <- learned.drop(1) do bump(l.variable)
     val backjump = if learned.length == 1 then 0 else learned.tail.map(l => level(l.variable)).max
@@ -356,6 +439,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
         value(lit.index) = 0
         value(lit.neg.index) = 0
         phase(lit.variable) = lit.positive
+        if proof != null then reasonStep(lit.variable) = -1
         if vmtfSearch < 0 || vmtfStamp(lit.variable) > vmtfStamp(vmtfSearch) then vmtfSearch = lit.variable
       theory.pop()
     qhead = math.min(qhead, trail.length) // a literal enqueued at a surviving level stays to be propagated
@@ -397,7 +481,9 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
    *  the conflict already held; an empty one holds at level 0.
    */
   private def resolve(conflict: Array[Lit]): Boolean =
+    val pf = proof
     if conflict.isEmpty then
+      if pf != null then pf.conclusion = stepOf.get(conflict).nn.intValue
       unsat = true // a theory found the clauses inconsistent by themselves
       return false
     val top = conflict.map(l => level(l.variable)).max
@@ -406,6 +492,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
       // Every literal of the conflict is a level-0 fact: the clauses alone are unsatisfiable, for good.
       // Said here, or the next solve, starting past the literals already propagated, never meets the
       // clause again and answers sat (issue 37).
+      if pf != null then pf.conclusion = refute(conflict)
       unsat = true
       false
     else
@@ -414,6 +501,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
       backtrack(to)
       val index = clauses.length
       clauses += learned
+      if pf != null then stepOf.put(learned, pf.add(Proof.Step.Derived(learned.clone(), learnedHints)))
       if learned.length >= 2 then
         // Watch the asserting literal and a literal of the backjump level, the last to become unassigned.
         var k = 2
@@ -452,15 +540,24 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
     val seen = new Array[Boolean](varCount)
     val core = ArrayBuffer(failed)
     seen(failed.variable) = true
+    val pf = proof
+    val reasons = ArrayBuffer.empty[Int] // for the proof: the reasons met, last first
+    val zeros = ArrayBuffer.empty[Var] // and the level-0 variables
     var index = trail.length - 1
     while index >= 0 do
       val p = trail(index)
       index -= 1
-      if seen(p.variable) && level(p.variable) > 0 then
+      if seen(p.variable) && level(p.variable) == 0 then
+        if pf != null then zeros += p.variable
+      else if seen(p.variable) then
         reason(p.variable) match
           case Decision => core += p // an assumption: decisions above it are not seen
-          case FromTheory => for l <- theoryClause(p).drop(1) do seen(l.variable) = true
-          case clause => for l <- clauses(clause).drop(1) do seen(l.variable) = true
+          case _ =>
+            for l <- reasonClause(p).drop(1) do seen(l.variable) = true
+            if pf != null then reasons += reasonId(p.variable)
+    if pf != null then
+      val hints = units(zeros).toArray ++ reasons.reverseIterator
+      pf.conclusion = pf.add(Proof.Step.Derived(core.map(_.neg).toArray, hints))
     core.toArray
 
   /** Solves; `keepGoing` is asked at every conflict and decision, and `Unknown`
@@ -509,7 +606,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
           theory.finalCheck() match
             case Theory.Result.Unknown => return Result.Unknown
             case Theory.Result.Conflict(reasons) =>
-              if !resolve(reasons.map(_.neg).toArray) then return Result.Unsat
+              if !resolve(lemma(reasons.map(_.neg).toArray)) then return Result.Unsat
             case Theory.Result.Split(lit) =>
               if !keepGoing() then return Result.Unknown
               while varCount <= lit.variable do newVar()
@@ -523,6 +620,6 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
               for l <- implied if value(l.index) == 0 do enqueue(l, FromTheory)
             case Theory.Result.Ok(implied) =>
               implied.find(l => value(l.index) < 0) match
-                case Some(l) => if !resolve(theoryClause(l)) then return Result.Unsat
+                case Some(l) => if !resolve(lemma(theoryClause(l))) then return Result.Unsat
                 case None => return Result.Sat(Array.tabulate(varCount)(v => value(Lit(v).index) > 0))
     Result.Unsat

@@ -1,0 +1,8 @@
+; From cvc5: regress0/tptp/parse-neg-rational.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_UFLRA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_UFLRA)
+(set-info :status unsat)
+(declare-sort $$unsorted 0)
+(assert (not (< (/ (- 1) 4) (/ 1 4))))
+(set-info :filename parse-neg-rational)
+(check-sat-assuming ( true ))

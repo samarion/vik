@@ -169,6 +169,56 @@ class ParserTest extends munit.FunSuite:
       )
     do intercept[Smt2Error](parse(script))
 
+  test("a datatype declares each constructor and each selector once"):
+    // The second `f` replaced the first, so `(f (A 5))` was any integer (issue 146).
+    for script <- List(
+        "(declare-datatype D ((A (f Int)) (B (f Int))))",
+        "(declare-datatype D ((A (f Int) (f Bool))))",
+        "(declare-datatype D ((A) (A (f Int))))",
+        "(declare-datatypes ((D 0) (E 0)) (((A)) ((B (f Int)) (C (f Int)))))",
+        "(declare-datatype D (par (T) ((A (f T)) (B (f T)))))",
+        "(declare-datatypes ((D 1) (E 0)) ((par (T) ((A (f T)))) ((B (g Int)) (C (g Int)))))"
+      )
+    do intercept[Smt2Error](parse(script))
+    val e = intercept[Smt2Error](parse("(declare-datatype D ((A (f Int)) (B (f Int))))"))
+    assertEquals(e.getMessage, "f: a selector declared twice in the datatype D")
+    // Two datatypes may name a selector alike, and a selector may be named like a constructor.
+    parse("(declare-datatypes ((D 0) (E 0)) (((A (f Int))) ((B (f Int)))))")
+    parse("(declare-datatype D ((A (B Int)) (B (A Int))))")
+
+  test("a datatype is well-founded"):
+    // No constructor of these can be applied first: they have no value, and SMT-LIB excludes them (issue 147).
+    val box = "(declare-datatype Box (par (X) ((box (unbox X)))))"
+    for script <- List(
+        "(declare-datatype T ())",
+        "(declare-datatype T ((c (f T))))",
+        "(declare-datatype T ((c (n Int) (f T)) (d (g T))))",
+        "(declare-datatypes ((A 0) (B 0)) (((a (x B))) ((b (y A)))))",
+        "(declare-datatypes ((T 0)) (((c (f (Array Int T))))))",
+        "(declare-datatype T ((c (f (Array T Int)))))",
+        s"$box (declare-datatype T ((c (f (Box T)))))",
+        "(declare-datatypes ((A 0) (B 0) (Box 1)) (((a (x B))) ((b (y A))) (par (X) ((box (unbox X))))))",
+        // A parametric datatype is read where it is instantiated, and refused there.
+        "(declare-datatype L (par (X) ((cons (head X) (tail (L X)))))) (declare-const x (L Int))",
+        s"$box (declare-datatype W (par (X) ((w (u (Box (W X))))))) (declare-const x (W Int))",
+        "(declare-datatype Opt (par (X) ((none) (some (val X)))))" +
+          "(declare-datatype L (par (X) ((cons (head X) (tail (L X))))))" +
+          "(assert (= (as none (Opt (L Int))) (as none (Opt (L Int)))))"
+      )
+    do
+      val e = intercept[Smt2Error](parse(script))
+      assert(e.getMessage.contains("is not well-founded"), e.getMessage)
+    // A value through a later member of the group, through an instance, and under an array.
+    parse("(declare-datatypes ((A 0) (B 0)) (((a (x B))) ((b (y A)) (e))))")
+    parse("""
+      (declare-datatype List (par (X) ((nil) (cons (head X) (tail (List X))))))
+      (declare-datatype Tree ((node (children (List Tree)))))
+      (declare-datatype Rose (par (X) ((rose (label X) (subtrees (List (Rose X)))))))
+      (declare-const r (Rose Tree))
+      """)
+    parse("(declare-datatype T ((c (f (Array Int T))) (leaf)))")
+    parse("(declare-sort U 0) (declare-datatype T ((c (u U) (s String) (b (_ BitVec 8)) (r Real))))")
+
   test("the datatypes a field may mention"):
     parse("""
       (declare-sort U 0) (declare-sort B 1)
@@ -176,7 +226,7 @@ class ParserTest extends munit.FunSuite:
       (declare-datatypes ((A 0) (C 0)) (((a (c C))) ((e) (d (a A)))))
       (declare-datatypes ((L 1)) ((par (T) ((nil) (cons (head T) (tail (L T)))))))
       (declare-datatype F ((f (l (L F)) (u U) (b (B Int)) (arr (Array Int U)))))
-      (declare-datatypes ((M 1) (N 0)) ((par (T) ((m1 (v T) (o N)))) ((n1 (w (M Int))))))
+      (declare-datatypes ((M 1) (N 0)) ((par (T) ((m1 (v T) (o N)))) ((n0) (n1 (w (M Int))))))
       (declare-datatype Unused ((s (t String))))
       (declare-const x (L Int)) (declare-const y (M Bool)) (declare-const z (B U))
       """)

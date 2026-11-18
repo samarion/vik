@@ -198,7 +198,12 @@ lazy val smtlibutils = (project in file("smtlibutils"))
   .settings(
     name := "smtlibutils",
     publish / skip := true, // corpus tooling and tests, not a library
-    libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test
+    libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test,
+    // The tools run in a JVM of their own, from the repository's root like the unforked ones: `ignorestamp`
+    // runs four files at a time, each used to the tests' 2 GB.
+    run / fork := true,
+    run / baseDirectory := (ThisBuild / baseDirectory).value,
+    run / javaOptions += "-Xmx8g"
   )
   .settings(forkedTests *)
 

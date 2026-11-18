@@ -1,0 +1,12 @@
+; From cvc5: regress0/uflra/bug293.cvc.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: unsat
+; logic: QF_UFLRA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_UFLRA)
+(set-option :incremental false)
+(declare-fun x () Real)
+(declare-fun f (Real) Real)
+(assert (not (= (f 1.0) (f x))))
+(assert (not (= (f 0.0) (f x))))
+(assert (xor (= x 0.0) (= x 1.0)))
+(set-info :status unsat)
+(check-sat)

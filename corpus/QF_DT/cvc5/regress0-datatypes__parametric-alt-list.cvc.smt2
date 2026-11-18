@@ -1,0 +1,11 @@
+; From cvc5: regress0/datatypes/parametric-alt-list.cvc.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+(set-logic ALL)
+(set-option :incremental false)
+(declare-datatypes ((List 2)) ((par (X Y)((nil) (cons (head X) (tail (List Y X)))))))
+(declare-fun x () (List Int String))
+(declare-fun y () (List Int String))
+(assert (not (= x y)))
+(assert (not (= x (tail (tail x)))))
+(set-info :status sat)
+(check-sat)

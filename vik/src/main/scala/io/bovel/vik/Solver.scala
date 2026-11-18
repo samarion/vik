@@ -24,7 +24,7 @@ import io.bovel.smtlib.{Datatype, Sorts}
  *  atom of both theories, and the SAT solver decides the arrangement (Nelson
  *  and Oppen; see `Encoder.shareIntegers`).
  */
-final class Solver(val simplify: Boolean = true):
+final class Solver(val simplify: Boolean = true, val proofs: Boolean = false):
   enum Result:
     case Sat
     case Unsat
@@ -41,6 +41,12 @@ final class Solver(val simplify: Boolean = true):
      *  cancellation.
      */
     case Stopped
+
+    /** With [[checkModels]]: the search found the assertions satisfiable, and
+     *  the model it built does not make one of them true, which `failure`
+     *  names. A bug of the solver, in the search or in the model, to report.
+     */
+    case Model(failure: String)
 
   private val levels = ArrayBuffer(ArrayBuffer.empty[Formula])
 
@@ -87,7 +93,13 @@ final class Solver(val simplify: Boolean = true):
   /** Forgets a declaration: its level is popped (issue 40). */
   def undeclare(name: String): Unit = declarations -= name
 
+  /** Forgets a datatype: its level is popped. The live encoder still holds its
+   *  rules and the exhaustiveness of its sort, and would apply them to a sort
+   *  or to symbols declared later under the same names (issue 144): it is
+   *  rebuilt.
+   */
   def undeclare(datatype: Datatype): Unit =
+    if encoder != null then dirty = true
     datatypes.filterInPlace(_.name != datatype.name)
     for c <- datatype.constructors do
       declarations -= c.name
@@ -140,6 +152,64 @@ final class Solver(val simplify: Boolean = true):
    */
   var produceModels: Boolean = true
 
+  /** Whether a `Sat` is checked before it is answered: the model is built and
+   *  every assertion in force, as given to [[assert]] (before the
+   *  simplification), must hold in it ([[Model.holds]]). When one does not, the
+   *  answer is `Unknown` with [[Reason.Model]], and there is no model. Off by
+   *  default: it costs a model and a walk of the assertions per `Sat`.
+   */
+  var checkModels: Boolean = false
+
+  /** The first assertion in force that the model of the `Sat` just found does
+   *  not make true: found false, or not evaluable when the evaluation throws.
+   */
+  private def modelFailure(): Option[String] = model() match
+    case None => Some("no model")
+    case Some(m) =>
+      val items = levels.iterator.flatten.zipWithIndex.map((f, i) => (s"assertion ${i + 1}", f)) ++
+        named.iterator.flatten.map((name, f) => (s"assertion $name", f))
+      items.flatMap { (what, f) =>
+        val value =
+          try if m.holds(f) then "true" else "false"
+          catch case e: Exception => s"not evaluable (${e.getClass.getSimpleName}: ${e.getMessage})"
+        Option.when(value != "true") {
+          val text = Printer.print(f)
+          s"$what ${if text.length > 200 then text.take(200) + "..." else text} is $value"
+        }
+      }.nextOption()
+
+  /** Forgets the model of the last `Sat`: for a caller whose own check of it
+   *  failed (see [[Session]]).
+   */
+  private[vik] def dropModel(): Unit =
+    val e = encoder
+    if e != null then e.lastModel = null
+
+  /** The clausal proof of the last [[solve]]'s `Unsat`, when the solver was
+   *  made with `proofs`: over the variables of the SAT search, with the theory
+   *  lemmas taken on trust (see [[cdclt.Proof]]).
+   */
+  def proof: Option[cdclt.Proof] = Option(encoder).flatMap(e => Option(e.proof)).filter(_.conclusion >= 0)
+
+  /** Checks the [[proof]] of the last `Unsat` (see `Encoder.checkProof`):
+   *  `None` when it holds.
+   */
+  def checkProof(): Option[String] = proof.flatMap(_ => encoder.nn.checkProof(proved._1, proved._2))
+
+  /** The [[proof]] of the last `Unsat` as Lean terms that `proofs/lean` checks
+   *  (see [[LeanExport]]), or why it cannot be written.
+   */
+  def leanProof(surface: Option[LeanExport.Surface] = None): Either[String, String] = proof match
+    case None => Left("no proof")
+    case Some(_) => encoder.nn.lean(levels.head.toList, proved._2.toList.sorted, surface)
+
+  /** What the [[proof]] of the last `Unsat` refutes, taken at that solve: the
+   *  assertions of the first level, and the variables of the literals assumed
+   *  (the selectors of the other levels, the activations of the named
+   *  assertions).
+   */
+  private var proved: (Set[Formula], Set[cdclt.Var]) = (Set.empty, Set.empty)
+
   /** The model of the last [[solve]]'s `Sat`, or `None` after any other answer:
    *  values for the constants, a finite graph per declared function (see
    *  [[Model]]).
@@ -169,6 +239,16 @@ final class Solver(val simplify: Boolean = true):
     else if e != null && !dirty then
       e.assert(formula, if levels.length == 1 then null else selectors(levels.length - 2))
 
+  /** Asserts `formula` below every open level: no [[pop]] takes it back. For
+   *  what is said of a symbol that outlives the levels (see
+   *  [[Command.AssertGlobal]]).
+   */
+  def assertGlobal(formula: Formula): Unit =
+    levels.head += formula
+    val e = encoder
+    if mentionsEliminated(formula) then dirty = true
+    else if e != null && !dirty then e.assert(formula, null)
+
   // The elimination assumed the constant stayed local; a mention breaks it: start over.
   private def mentionsEliminated(formula: Formula): Boolean = encoder != null && !dirty
     && eliminated.nonEmpty && formula.terms.exists(Term.constants(_).exists(eliminated.contains))
@@ -184,7 +264,7 @@ final class Solver(val simplify: Boolean = true):
       calls += 1
       (calls & 15) != 1 || spent - start <= fuel // summed at the first step and every 16th: a dozen products
     ) match
-      case Result.Unknown(_) => Result.Unknown(Reason.Fuel)
+      case Result.Unknown(Reason.Stopped) => Result.Unknown(Reason.Fuel)
       case result => result
 
   /** Decides the assertions while `keepGoing` says so, asked at every step: a
@@ -262,14 +342,15 @@ final class Solver(val simplify: Boolean = true):
   private def decide(keepGoing: () => Boolean): Result =
     if encoder == null || dirty then
       if encoder != null then encoder.nn.addCounts(retired)
-      val e = Encoder(declarations, datatypes.toList, () => anyStore, () => asked())
+      val e = Encoder(declarations, datatypes.toList, () => anyStore, () => asked(), proofs)
       encoder = e
       encoded.clear()
       encoded ++= declarations
       dirty = false
       selectors.clear()
       val constructors = datatypes.flatMap(_.constructors.map(_.name)).toSet
-      if levels.length == 1 && simplify then
+      // With proofs, the assertions are encoded as they were given: proofs start from them.
+      if levels.length == 1 && simplify && !proofs then
         // One level: the batch is the whole set, so the global simplification is sound to keep.
         val (simplified, gone) =
           Simplifier.simplify(levels.head.toList, constructors, named.head.map(_._2).toList, e.step)
@@ -283,7 +364,7 @@ final class Solver(val simplify: Boolean = true):
             selectors += e.newSelector(); selectors.last
           for formula <- level do e.assert(formula, selector)
     val e = encoder.nn
-    e.produceModels = produceModels
+    e.produceModels = produceModels || checkModels
     val activations = named.flatten.toList.map((name, formula) => (name, e.activate(formula)))
     // The passes feed one another — a shared array pair gets a witness, the witness an index, the index
     // new store lemmas and new shared selects — so they run to a fixpoint of the emitted clauses.
@@ -293,19 +374,24 @@ final class Solver(val simplify: Boolean = true):
     // The Boolean terms are decided in the loop, first: deciding one encodes the terms inside it,
     // a `store` in a Boolean argument among them, which the passes of the same round then see
     // (issue 17). The loop measures the terms decided as well as the clauses, since a round that
-    // registers a Boolean and emits nothing else is not done.
+    // registers a Boolean and emits nothing else is not done; and the function equalities, since the
+    // sharing makes one per pair of arrays without a clause, and its witness is the next round's
+    // (issue 133).
     var emitted = -1
     var decided = -1
-    while (emitted != e.clauseCount || decided != e.booleanCount) && keepGoing() do
+    var equated = -1
+    def settled = emitted == e.clauseCount && decided == e.booleanCount && equated == e.functionEqualityCount
+    while !settled && keepGoing() do
       emitted = e.clauseCount
       decided = e.booleanCount
+      equated = e.functionEqualityCount
       e.decideBooleans()
       e.assertExtensionality()
       e.applicationLemmas()
       e.arrayLemmas()
       e.assertExhaustiveness()
       e.shareIntegers()
-    if emitted != e.clauseCount || decided != e.booleanCount then
+    if !settled then
       // Stopped short of the fixpoint: clauses are missing, and a search over the rest could answer
       // sat without them (issue 38).
       lastCore = Nil
@@ -315,8 +401,15 @@ final class Solver(val simplify: Boolean = true):
     e.solve(assumed, keepGoing) match
       case cdclt.Solver.Result.Sat(_) =>
         lastCore = Nil
-        Result.Sat
+        if !checkModels then Result.Sat
+        else
+          modelFailure() match
+            case None => Result.Sat
+            case Some(failure) =>
+              e.lastModel = null
+              Result.Unknown(Reason.Model(failure))
       case cdclt.Solver.Result.Unsat =>
+        if proofs then proved = (levels.head.toSet, assumed.iterator.map(_.variable).toSet)
         val core = e.core().toSet
         lastCore = activations.collect { case (name, a) if core(a) => name }
         Result.Unsat
@@ -372,11 +465,40 @@ private object Encoder:
   /** Thrown by [[Encoder.step]] when the solve's `keepGoing` says to stop. */
   object Stopped extends scala.util.control.ControlThrowable
 
+  /** Where a clause of the encoding comes from, for proofs (see
+   *  `Encoder.checkProof`):
+   *    - `Definition`: a clause of the definition of a variable by its formula
+   *      (Tseitin), `True`, or a Boolean term tied to its formula;
+   *    - `Assertion`: the clause of an asserted formula, possibly guarded by
+   *      the literal of a level or of a named assertion;
+   *    - `Retired`: a popped level's selector, false for good;
+   *    - `Exhaustive`: one of the testers of a datatype term holds;
+   *    - `SharedSplit`: two shared terms are equal, or one is below the other;
+   *    - `Numerals`: two numerals are equal or not;
+   *    - `Congruence`: arrays equal are equal at an index;
+   *    - `ReadOverWrite`: the array axioms of a store;
+   *    - `Extensionality`: two functions are equal or differ at fresh
+   *      `witnesses`;
+   *    - `WitnessRange`: a bit-vector witness index is in its range.
+   */
+  enum Origin:
+    case Definition
+    case Assertion(formula: Formula)
+    case Retired
+    case Exhaustive(term: Term)
+    case SharedSplit
+    case Numerals
+    case Congruence
+    case ReadOverWrite
+    case Extensionality(witnesses: List[Term])
+    case WitnessRange(witness: Term, width: Int)
+
 private final class Encoder(
     declarations: HashMap[String, (List[String], String)],
     datatypes: List[Datatype],
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
-    keepGoing: () => Boolean // of the solve under way (see Solver.solve)
+    keepGoing: () => Boolean, // of the solve under way (see Solver.solve)
+    proofs: Boolean
 ):
   private var steps = 0L
 
@@ -431,6 +553,18 @@ private final class Encoder(
 
   private val datatypeNames = datatypes.map(_.name).toSet
 
+  /** The fields that [[shareIntegers]] pairs with their constructor's arguments
+   *  (the selector rule): the arithmetic ones and the arrays, each as its
+   *  selector, its constructor and its position. Found once: the pass runs at
+   *  every round of every check, and a sort's text is built at each asking.
+   */
+  private val sharedFields: List[(Term, Term, Int)] =
+    for
+      d <- datatypes; c <- d.constructors; ((selector, sort), i) <- c.selectors.zipWithIndex
+      text = sort.text
+      if text == "Int" || text == "Real" || Sorts.arrow(text).isDefined
+    yield (Term.Const(selector), Term.Const(c.name), i)
+
   /** The datatypes with finitely many values: no constructor field of an
    *  uninterpreted sort or of an infinite (e.g. recursive) datatype, computed
    *  as a least fixpoint.
@@ -477,7 +611,7 @@ private final class Encoder(
    */
   private val sharedPairs = scala.collection.mutable.HashSet.empty[(Term, Term)]
 
-  def shareIntegers(): Unit = if anyInt || intTerms.nonEmpty || anyStore() then
+  def shareIntegers(): Unit = if anyInt || anyArray || intTerms.nonEmpty || anyStore() then
     val pairs = ArrayBuffer.empty[(Term, Term)] // the pairs this call is first to meet
     val arrayPairs = ArrayBuffer.empty[(Term, Term)] // function-sorted pairs: their equality atom, for extensionality
     def pair(a: Term, b: Term): Unit =
@@ -527,13 +661,10 @@ private final class Encoder(
     for case eq @ Formula.Eq(a, b) <- lits.keys if !lemmaEqualities(eq) do pair(a, b)
     // A selector's applications meet the arguments of its constructor at its position (the selector rule).
     // An arithmetic field, integer or real: a real one shared only through the e-graph left the
-    // simplex without its equalities (issue 18).
-    for
-      d <- datatypes; c <- d.constructors; ((selector, sort), i) <- c.selectors.zipWithIndex
-      if sort.text == "Int" || sort.text == "Real"
-    do
-      for s <- applications.getOrElse(Term.Const(selector), Nil); k <- applications.getOrElse(Term.Const(c.name), Nil)
-      do
+    // simplex without its equalities (issue 18). And an array field: the e-graph equates the selector's
+    // application with the array, but their reads are shared only once the two are a pair (issue 134).
+    for (selector, constructor, i) <- sharedFields do
+      for s <- applications.getOrElse(selector, Nil); k <- applications.getOrElse(constructor, Nil) do
         if k.args.length > i then pair(s, k.args(i))
     for (a, b) <- pairs do
       val e = lit(Formula.Eq(a, b))
@@ -548,15 +679,17 @@ private final class Encoder(
         // band `(c − 1, c)` and forces two shared terms less than one apart to be equal (issue 8).
         val below = if liaSolver.isInteger(x) then bound(x, c - 1, false) else bound(x, c, true)
         val above = bound(x, c, false)
-        clauses += Array(e, below, above.neg)
+        mean(below, Formula.Less(a, b))
+        mean(above, Formula.Le(a, b))
+        emit(Array(e, below, above.neg), Encoder.Origin.SharedSplit)
         // Over the reals the two sides are bounds on the same constant, and `< c` implies `≤ c`: said
         // here, the search does not have to reach the theory to find that out.
-        if !liaSolver.isInteger(x) then clauses += Array(below.neg, above)
+        if !liaSolver.isInteger(x) then emit(Array(below.neg, above), Encoder.Origin.SharedSplit)
         guidedAtoms += below.variable
         guidedAtoms += above.variable
         anySharedAtom = true
       Term.linear(List((1, a), (-1, b))) match
-        case Term.Num(v) => clauses += Array(if v.signum == 0 then e else e.neg) // two numerals
+        case Term.Num(v) => emit(Array(if v.signum == 0 then e else e.neg), Encoder.Origin.Numerals) // two numerals
         case Term.Linear(terms, c) => equalOrApart(slack(terms), -c)
         case difference => equalOrApart(intVar(difference), 0)
     // An equality atom per pair of function-sorted shared terms — two arrays under the same function can
@@ -598,7 +731,7 @@ private final class Encoder(
           val applied = Term.App(s, a.args)
           equated += ((a, applied))
           recordFunctionEqualities = false
-          clauses += Array(lit(Formula.Eq(a.fun, s)).neg, lit(Formula.Eq(a, applied)))
+          emit(Array(lit(Formula.Eq(a.fun, s)).neg, lit(Formula.Eq(a, applied))), Encoder.Origin.Congruence)
           recordFunctionEqualities = true
     // An application equated with an integer term is one, and conversely (for the sharing).
     var changed = true
@@ -628,6 +761,8 @@ private final class Encoder(
    */
   private val functionEqualities = ArrayBuffer.empty[Formula]
   private var recordFunctionEqualities = true
+
+  def functionEqualityCount: Int = functionEqualities.length
 
   /** A witness index's name, `ext!N`, past the script's symbols: a script
    *  constant `ext!0` was the witness, and a later declaration of a witness's
@@ -664,14 +799,20 @@ private final class Encoder(
                     // differ at it (issue 20).
                     introduced(name) = "Int"
                     val w = Term.Const(name)
-                    clauses += Array(lit(Formula.Le(Term.Num(0), w)))
-                    clauses += Array(lit(Formula.Le(w, Term.Num(BigInt(2).pow(width.nn.toInt) - 1))))
+                    emit(Array(lit(Formula.Le(Term.Num(0), w))), Encoder.Origin.WitnessRange(w, width.nn.toInt))
+                    emit(
+                      Array(lit(Formula.Le(w, Term.Num(BigInt(2).pow(width.nn.toInt) - 1)))),
+                      Encoder.Origin.WitnessRange(w, width.nn.toInt)
+                    )
                     w
                   case _ =>
                     introduced(name) = sort
                     Term.Const(name)
               }
-              clauses += Array(lit(eq), lit(Formula.Eq(applyAll(f, witnesses), applyAll(g, witnesses))).neg)
+              emit(
+                Array(lit(eq), lit(Formula.Eq(applyAll(f, witnesses), applyAll(g, witnesses))).neg),
+                Encoder.Origin.Extensionality(witnesses)
+              )
             case _ => ()
 
   /** Asserts, for every term of a datatype sort seen so far, that one of its
@@ -690,13 +831,15 @@ private final class Encoder(
           val datatype = datatypes.find(_.name == sortOf(t)).get
           assert(
             Formula.Or(datatype.constructors.map(c => Formula.Pred(Term.App(Term.Const(c.tester), List(t))))),
-            null
+            null,
+            Encoder.Origin.Exhaustive(t)
           )
           if finite(datatype.name) then
             for c <- datatype.constructors; (selector, sort) <- c.selectors if datatypeNames(sort.text) do
               todo += Term.App(Term.Const(selector), List(t))
 
   private val liaSolver = lia.Solver()
+  liaSolver.proofs = proofs
   private val intVars = HashMap.empty[Term, lia.Var] // `Int`-sorted constants and applications
   private val slacks = HashMap.empty[List[(BigInt, Term)], lia.Var] // linear combinations of them
 
@@ -705,8 +848,26 @@ private final class Encoder(
   private val liaAtoms = ArrayBuffer.empty[LiaTheory.Atom | Null] // per variable, its LIA atom, if any
   private val guidedAtoms = HashSet.empty[cdclt.Var] // the sides of the disequality clauses (see LiaTheory.phase)
   private val lits = HashMap.empty[Formula, Lit]
+
+  /** With proofs, where each clause comes from (see [[Encoder.Origin]]), and
+   *  what each variable stands for: the formula it was encoded for, `null` for
+   *  a selector or an activation literal.
+   */
+  private val origins = ArrayBuffer.empty[Encoder.Origin]
+  private val meanings = ArrayBuffer.empty[Formula | Null]
+
+  private inline def emit(clause: Array[Lit], inline origin: Encoder.Origin): Unit =
+    clauses += clause
+    if proofs then origins += origin
+
+  private inline def mean(l: Lit, inline formula: Formula): Unit =
+    if proofs then
+      while meanings.length <= l.variable do meanings += null
+      meanings(l.variable) = formula
+
   private val trueLit = freshVar() // a variable asserted true, for `True`
-  clauses += Array(trueLit)
+  mean(trueLit, Formula.True)
+  emit(Array(trueLit), Encoder.Origin.Definition)
   eg.disequate(trueTerm, falseTerm, trueLit.index)
 
   private def freshVar(): Lit =
@@ -723,11 +884,14 @@ private final class Encoder(
   private def boolean(term: Term): Unit =
     if sortOf(term) == "Bool" && booleanClasses.add(classOf(term)) then booleans += term
 
-  /** Whether some term is an integer, or some equality is between functions
-   *  (arrays): the passes over all the terms of [[shareIntegers]] and
+  /** Whether some term is an integer, some application takes or gives an array
+   *  (two arrays under the same function are a pair to share, with or without
+   *  an integer or a `store` around: issue 133), or some equality is between
+   *  functions (arrays): the passes over all the terms of [[shareIntegers]] and
    *  [[assertExtensionality]] are skipped otherwise (many queries are small).
    */
   private var anyInt = false
+  private var anyArray = false
   private var anyFunctionEquality = false
 
   def classOf(term: Term): EClassId = classes.getOrElseUpdate(
@@ -744,6 +908,8 @@ private final class Encoder(
       case Term.Const(_) => eg.newClass()
       case Term.App(fun, args) =>
         args.foreach(boolean)
+        // Looked at until the first one: once set, the flag stays.
+        if !anyArray && (isFun(term) || args.exists(isFun)) then anyArray = true
         eg.add(App(classOf(fun), ArraySeq.from(args.map(classOf))))
       case Term.Num(_) | Term.Linear(_, _) => eg.newClass() // a leaf for the e-graph, a variable for LIA (shared)
       case Term.Bool(_) => eg.newClass() // a leaf, tied to its formula by `Pred` (see `encode`)
@@ -801,13 +967,14 @@ private final class Encoder(
       val sort = sortOf(s)
       val indexSort = Sorts.arrow(sort).get._1.head
       val elementSort = Sorts.applied(sort, 1) // an array, for an array of arrays
-      if arrayWritesDone.add(s) then clauses += Array(lit(equalAt(elementSort, selectTerm(s, i), v)))
+      if arrayWritesDone.add(s) then
+        emit(Array(lit(equalAt(elementSort, selectTerm(s, i), v))), Encoder.Origin.ReadOverWrite)
       for j <- indices.getOrElse(sort, Nil) do
         step()
         if j != i && arrayReadsDone.add((s, j)) then
-          clauses += Array(
-            lit(equalAt(indexSort, i, j)),
-            lit(equalAt(elementSort, selectTerm(s, j), selectTerm(a, j)))
+          emit(
+            Array(lit(equalAt(indexSort, i, j)), lit(equalAt(elementSort, selectTerm(s, j), selectTerm(a, j)))),
+            Encoder.Origin.ReadOverWrite
           )
 
   def booleanCount: Int = booleans.length
@@ -827,6 +994,17 @@ private final class Encoder(
     atoms += null
     liaAtoms += LiaTheory.Atom.Bound(x, c, strict)
     Lit(atoms.length - 1)
+
+  /** The atom `x ≤ c` of a split of the LIA solver, standing for the bound on
+   *  the term or the combination of `x`.
+   */
+  private def splitBound(x: lia.Var, c: BigInt): Lit =
+    val l = bound(x, c, false)
+    if proofs then
+      val term = intVars.collectFirst { case (t, y) if y == x => t }
+        .orElse(slacks.collectFirst { case (ts, y) if y == x => Term.Linear(ts, 0) })
+      for t <- term do mean(l, Formula.Le(t, Term.Num(c)))
+    l
 
   /** `lhs − rhs ≤ 0` (`< 0` when strict), as a bound on the combination
    *  `Σ a × t` (`+ c`) or on a lone term.
@@ -884,50 +1062,64 @@ private final class Encoder(
           if sortOf(lhs).startsWith("(->") || sortOf(rhs).startsWith("(->") then
             anyFunctionEquality = true
             if recordFunctionEqualities then functionEqualities += formula else lemmaEqualities += formula
-          atom(classOf(lhs), classOf(rhs))
+          val e = atom(classOf(lhs), classOf(rhs))
+          mean(e, formula)
+          e
       case Pred(term) =>
         // Two-valued from its first literal on: the theory merges a false term with `false` only for
         // terms it knows as Boolean, and a term known only from a later solve keeps the assignment
         // of an earlier one, which is never asserted again (issue 14).
         boolean(term)
         val e = atom(classOf(term), trueTerm)
+        mean(e, formula)
         term match
           case Term.Bool(inner) => // `t = true` iff the formula holds
             val l = lit(inner)
-            clauses += Array(e.neg, l)
-            clauses += Array(l.neg, e)
+            emit(Array(e.neg, l), Encoder.Origin.Definition)
+            emit(Array(l.neg, e), Encoder.Origin.Definition)
           case _ => ()
         e
-      case Le(lhs, rhs) => comparison(lhs, rhs, strict = false)
-      case Less(lhs, rhs) => comparison(lhs, rhs, strict = true)
+      case Le(lhs, rhs) =>
+        val l = comparison(lhs, rhs, strict = false)
+        if l.variable != trueLit.variable then mean(l, formula)
+        l
+      case Less(lhs, rhs) =>
+        val l = comparison(lhs, rhs, strict = true)
+        if l.variable != trueLit.variable then mean(l, formula)
+        l
       case Implies(lhs, rhs) => lit(Or(List(Not(lhs), rhs)))
+      // The definitions of fresh variables (Tseitin).
       case And(args) =>
         val v = freshVar()
+        mean(v, formula)
         val as = args.map(lit)
-        for a <- as do clauses += Array(v.neg, a)
-        clauses += (v +: as.map(_.neg)).toArray
+        for a <- as do emit(Array(v.neg, a), Encoder.Origin.Definition)
+        emit((v +: as.map(_.neg)).toArray, Encoder.Origin.Definition)
         v
       case Or(args) =>
         val v = freshVar()
+        mean(v, formula)
         val as = args.map(lit)
-        for a <- as do clauses += Array(v, a.neg)
-        clauses += (v.neg +: as).toArray
+        for a <- as do emit(Array(v, a.neg), Encoder.Origin.Definition)
+        emit((v.neg +: as).toArray, Encoder.Origin.Definition)
         v
       case Iff(lhs, rhs) =>
         val v = freshVar()
+        mean(v, formula)
         val (a, b) = (lit(lhs), lit(rhs))
-        clauses += Array(v.neg, a.neg, b)
-        clauses += Array(v.neg, a, b.neg)
-        clauses += Array(v, a, b)
-        clauses += Array(v, a.neg, b.neg)
+        emit(Array(v.neg, a.neg, b), Encoder.Origin.Definition)
+        emit(Array(v.neg, a, b.neg), Encoder.Origin.Definition)
+        emit(Array(v, a, b), Encoder.Origin.Definition)
+        emit(Array(v, a.neg, b.neg), Encoder.Origin.Definition)
         v
       case Ite(cond, thn, els) =>
         val v = freshVar()
+        mean(v, formula)
         val (c, t, e) = (lit(cond), lit(thn), lit(els))
-        clauses += Array(v.neg, c.neg, t)
-        clauses += Array(v.neg, c, e)
-        clauses += Array(v, c.neg, t.neg)
-        clauses += Array(v, c, e.neg)
+        emit(Array(v.neg, c.neg, t), Encoder.Origin.Definition)
+        emit(Array(v.neg, c, e), Encoder.Origin.Definition)
+        emit(Array(v, c.neg, t.neg), Encoder.Origin.Definition)
+        emit(Array(v, c, e.neg), Encoder.Origin.Definition)
         v
 
   /** The assertions that are equality atoms: facts, which need no witness of
@@ -939,14 +1131,20 @@ private final class Encoder(
    *  null: the clause holds only while the selector does — a script level's
    *  assertion (see [[Solver.push]]).
    */
-  def assert(formula: Formula, under: Lit | Null): Unit =
+  def assert(formula: Formula, under: Lit | Null): Unit = assert(formula, under, Encoder.Origin.Assertion(formula))
+
+  /** With proofs, the formulas each selector or activation literal guards. */
+  private val guards = scala.collection.mutable.LinkedHashMap.empty[cdclt.Var, ArrayBuffer[Formula]]
+
+  private def assert(formula: Formula, under: Lit | Null, origin: Encoder.Origin): Unit =
     formula match
       // An equality asserted for good needs no witness; one under a level's selector is gone with
       // the level, and its negation then needs one like any other (issue 19).
       case Formula.Eq(_, _) if under == null => assertedEqualities += formula
       case _ => ()
     val l = lit(formula)
-    clauses += (if under == null then Array(l) else Array(under.nn.neg, l))
+    if proofs && under != null then guards.getOrElseUpdate(under.nn.variable, ArrayBuffer.empty) += formula
+    emit(if under == null then Array(l) else Array(under.nn.neg, l), origin)
 
   /** A fresh selector literal for a script level. */
   def newSelector(): Lit = freshVar()
@@ -961,7 +1159,8 @@ private final class Encoder(
     activations.getOrElseUpdate(
       formula, {
         val a = freshVar()
-        clauses += Array(a.neg, lit(formula))
+        if proofs then guards(a.variable) = ArrayBuffer(formula)
+        emit(Array(a.neg, lit(formula)), Encoder.Origin.Assertion(formula))
         a
       }
     )
@@ -970,7 +1169,7 @@ private final class Encoder(
   def core(): Array[Lit] = sat.unsatCore
 
   /** Retires a popped level's selector: false for good, its clauses inert. */
-  def retire(selector: Lit): Unit = clauses += Array(selector.neg)
+  def retire(selector: Lit): Unit = emit(Array(selector.neg), Encoder.Origin.Retired)
 
   /** The theories and the SAT solver, alive across [[solve]]s: everything
    *  learned stays. Both theories are always attached — their atom buffers grow
@@ -982,7 +1181,7 @@ private final class Encoder(
   private var anySharedAtom = false
 
   private val ufTheory = UfTheory(eg, atoms, trueTerm, falseTerm, booleanClasses)
-  private val theories = List(ufTheory, LiaTheory(liaSolver, liaAtoms, guidedAtoms, bound(_, _, strict = false)))
+  private val theories = List(ufTheory, LiaTheory(liaSolver, liaAtoms, guidedAtoms, splitBound))
 
   /** Adds the work of the encoding and of the engines to `counts`, in the order
    *  of `Solver.kinds`; the steps of the search and the arithmetic are the
@@ -1007,8 +1206,131 @@ private final class Encoder(
       v => if atoms(v) != null then theories.head else theories.last,
       v => atoms(v) != null && liaAtoms(v) != null, // only a shared equality needs its implier remembered
       () => anySharedAtom
-    )
+    ),
+    proofs = proofs
   )
+  def proof: cdclt.Proof | Null = sat.proof
+
+  /** Checks [[proof]]: its derivations, and the lemmas of the theories that
+   *  come with a certificate (see [[UfLemmas]]); the others are taken on trust.
+   *  `None` when it holds, what is wrong otherwise.
+   */
+  /** Checks [[proof]], a refutation of `inputs` (the assertions of the first
+   *  level) with the literals of `assumed` (the selectors of the other levels,
+   *  the activations of the named assertions): its conclusion is the clause of
+   *  the negations of some of these; its derivations check; its input clauses
+   *  against where they come from (see [[InputClauses]]); the lemmas of the
+   *  theories against their certificates (see [[UfLemmas]] and [[LiaLemmas]]),
+   *  the atoms these mention against the formulas their variables stand for.
+   *  `None` when it holds, what is wrong otherwise.
+   */
+  def lean(
+      inputs: List[Formula],
+      assumed: List[cdclt.Var],
+      surface: Option[LeanExport.Surface]
+  ): Either[String, String] =
+    val p = sat.proof
+    if p == null then Left("no proof")
+    else
+      LeanExport(
+        LeanExport.Input(
+          declarations,
+          introduced,
+          sortOf,
+          classes.iterator.map((t, x) => (x, t)).toMap,
+          trueTerm,
+          falseTerm,
+          atoms,
+          liaAtoms,
+          meanings,
+          trueLit,
+          intVars.iterator.map((t, x) => (x, t)).toMap,
+          liaSolver.numVars,
+          liaSolver.form,
+          p.nn,
+          datatypes,
+          inputs,
+          guards.iterator.map((v, fs) => (v, fs.toList)).toList,
+          assumed
+        ),
+        surface
+      )
+
+  def checkProof(inputs: Set[Formula], assumed: Set[cdclt.Var]): Option[String] =
+    val constructors = datatypes.flatMap(_.constructors).map(c =>
+      classOf(Term.Const(c.name)) -> c.selectors.map((s, _) => classOf(Term.Const(s)))
+    ).toMap
+    val testers =
+      datatypes.flatMap(_.constructors).map(c => classOf(Term.Const(c.tester)) -> classOf(Term.Const(c.name))).toMap
+    val uf = UfLemmas(atoms, trueTerm, falseTerm, trueLit, constructors, testers)
+    val arithmetic = LiaLemmas(liaSolver, liaAtoms)
+    val clauses = InputClauses(
+      meanings,
+      trueLit,
+      inputs,
+      v => v < atoms.length && (v >= meanings.length || meanings(v) == null) && v != trueLit.variable,
+      sort => datatypes.find(_.name == sort).map(_.constructors.map(_.tester)),
+      sortOf,
+      declarations.contains
+    )
+    // The classes of the certificates are those of terms: a leaf is a class the encoder made for a term
+    // (constant, number, combination or formula), at the first level, never undone; an application is its
+    // function applied to its arguments, recorded with the certificate.
+    val p = sat.proof.nn
+    val conclusion = p.steps(p.conclusion).clause
+    val unassumed = conclusion.find(l => l.positive || !assumed(l.variable))
+    unassumed.map(l => s"the conclusion has ${l.show}, not the negation of an assumption").orElse(checkAtoms()).orElse(
+      sat.proof.nn.check(
+        lemma =>
+          lemma.certificate match
+            case c: UfTheory.Certified => uf.check(lemma.clause, c)
+            case c: lia.Certificate => arithmetic.check(lemma.clause, c)
+            case _ => Some("no certificate")
+        ,
+        input =>
+          input.origin match
+            case o: Encoder.Origin => clauses.check(input.clause, o)
+            case _ => Some("no origin")
+      ).orElse(clauses.finish())
+    )
+
+  /** Whether every atom of the theories is that of the formula its variable
+   *  stands for: an equality atom on the classes of its sides, a bound on the
+   *  LIA variable of the difference of its sides.
+   */
+  private def checkAtoms(): Option[String] =
+    val termOf = intVars.iterator.map((t, x) => (x, t)).toMap
+    val combinationOf = slacks.iterator.map((ts, x) => (x, ts.toSet)).toMap
+    // Whether `lhs − rhs ≤ c` is a bound on `x`: `x` stands for `lhs − rhs` up to a constant.
+    def on(lhs: Term, rhs: Term, x: lia.Var, c: BigInt): Boolean = Term.linear(List((1, lhs), (-1, rhs))) match
+      case Term.Linear(terms, k) =>
+        c == -k &&
+        (combinationOf.get(x).contains(terms.toSet) ||
+          (terms match
+            case List((a, t)) => a == 1 && termOf.get(x).contains(t)
+            case _ => false))
+      case Term.Num(_) => false
+      case t => c == 0 && termOf.get(x).contains(t)
+    (0 until math.min(meanings.length, atoms.length)).iterator.flatMap { v =>
+      val m = meanings(v)
+      val uf = atoms(v)
+      val arith = liaAtoms(v)
+      def wrong = Some(s"the atom of variable $v is not that of $m")
+      val ufOk = uf == null ||
+        (m match
+          case Formula.Eq(l, r) => classes.get(l).contains(uf._1) && classes.get(r).contains(uf._2)
+          case Formula.Pred(t) => classes.get(t).contains(uf._1) && uf._2 == trueTerm
+          case _ => false)
+      val arithOk = arith == null ||
+        ((arith, m) match
+          case (LiaTheory.Atom.Bound(x, c, strict), Formula.Le(l, r)) => !strict && on(l, r, x, c)
+          case (LiaTheory.Atom.Bound(x, c, strict), Formula.Less(l, r)) =>
+            if strict then on(l, r, x, c) else liaSolver.isInteger(x) && on(l, r, x, c + 1)
+          case (LiaTheory.Atom.Equal(x, c), Formula.Eq(l, r)) => on(l, r, x, c)
+          case _ => false)
+      if ufOk && arithOk then None else wrong
+    }.nextOption()
+
   private var clauseCursor = 0
 
   /** The model of the last `Sat`, taken while the engines still held the answer
@@ -1022,7 +1344,7 @@ private final class Encoder(
     liaSolver.keepGoing = keepGoing // the fuel: conflicts of the search, pivots, propagations and branches of LIA
     while sat.vars < atoms.length do sat.newVar() // `atoms` is the source of truth
     while clauseCursor < clauses.length do
-      sat.addClause(clauses(clauseCursor))
+      sat.addClause(clauses(clauseCursor), if proofs then origins(clauseCursor) else null)
       clauseCursor += 1
     lastModel = null
     val result = sat.solve(assumptions.toArray, keepGoing)
@@ -1074,7 +1396,7 @@ private final class Encoder(
       case Term.App(Term.Const("/"), List(Term.Num(p), Term.Num(q))) => lia.Rational(p) / lia.Rational(q)
       case _ => lia.Rational.zero
     val arrayValues = HashMap.empty[EClassId, Term] // an array's value per e-class (see arrayValue)
-    val arraysBeingValued = scala.collection.mutable.HashSet.empty[EClassId] // against a cycle of stores
+    val arraysBeingValued = scala.collection.mutable.HashSet.empty[EClassId] // against a cycle of stores or of fields
     // The value of a datatype class with no constructor node: none of its testers holds, so none is
     // asserted of it, and the value is built — a constructor whose tester is not false, its fields
     // from the selectors' classes when the problem has them and fresh values otherwise — one that
@@ -1139,6 +1461,10 @@ private final class Encoder(
             case "Int" => Term.Num(freshInt(eg.find(cls)))
             case "Real" => Model.rationalTerm(freshReal(eg.find(cls)))
             case "Bool" => Term.boolean(if eg.find(cls) == eg.find(trueTerm) then Formula.True else Formula.False)
+            // An array, as a constructor's field: its value as an array, where an abstract element was
+            // no array to read or to compare (issue 139). A class reached again while it is valued is
+            // inside its own value, through an array of the datatype: only there is it an element.
+            case _ if Sorts.arrow(sort).isDefined && !arraysBeingValued(eg.find(cls)) => arrayValue(cls, sort)
             case _ => elementOf(sort, cls)
     def valueOfTerm(t: Term, sort: String): Term =
       (t, sort) match
@@ -1148,7 +1474,7 @@ private final class Encoder(
             sum + lia.Rational(a) * asRational(valueOfTerm(u, sortOf(u)))
           })
         case (_, s) if Sorts.arrow(s).isDefined => // an array: the element of an array of arrays
-          if classes.contains(t) then arrayValue(t, s)
+          if classes.contains(t) then arrayValue(classOf(t), s)
           else Model.constArray(Sorts.array(s), valueOfTerm(Term.Const("@default"), Sorts.applied(s, 1)))
         case (_, "Int") =>
           intVars.get(t).map(x => Term.Num(liaSolver.value(x)))
@@ -1169,12 +1495,18 @@ private final class Encoder(
                   case None => elementOf(sort, eg.newClass())
     // An array's value, per e-class: its default and the indices its class was read at — its own
     // selects, the ones of every array equal to it, the write of a store it equals.
-    def arrayValue(array: Term, sort: String): Term =
-      val root = eg.find(classOf(array))
+    def arrayValue(array: EClassId, sort: String): Term =
+      val root = eg.find(array)
       arrayValues.getOrElseUpdate(
         root, {
-          val indexSort = Sorts.arrow(sort).get._1.head
+          // A bit-vector index sort keeps its text for its width (see assertExtensionality), and its
+          // terms are integers all the same: valued at that name, an index was an abstract element,
+          // which no read at a number finds (issue 138).
+          val indexSort = Sorts.arrow(sort).get._1.head match
+            case Encoder.bitVector(_) => "Int"
+            case other => other
           val elementSort = Sorts.applied(sort, 1) // itself an array, for an array of arrays
+          arraysBeingValued += root
           val rows = classes.keys.collect {
             case app @ Term.App(fun, List(j)) if classes.get(fun).exists(c => eg.find(c) == root) =>
               (valueOfTerm(j, indexSort), valueOfTerm(app, elementSort))
@@ -1184,12 +1516,11 @@ private final class Encoder(
           // array of its own reads over a default of its own; the class's reads then agree with it
           // by the read-over-write lemmas. A class reached again while its base is valued keeps to
           // its reads.
-          arraysBeingValued += root
           val written = classes.keys.collectFirst {
             case s @ Term.App(Term.Const(n), List(base, i, v))
                 if n.startsWith("store!") && classes.get(s).exists(c => eg.find(c) == root)
                   && !arraysBeingValued(eg.find(classOf(base))) =>
-              Model.store(arrayValue(base, sort), valueOfTerm(i, indexSort), valueOfTerm(v, elementSort))
+              Model.store(arrayValue(classOf(base), sort), valueOfTerm(i, indexSort), valueOfTerm(v, elementSort))
           }
           arraysBeingValued -= root
           val start = written.getOrElse {
@@ -1207,7 +1538,7 @@ private final class Encoder(
       // An array the assertions never read or wrote holds a default everywhere: a value all the same,
       // where `(select arr i)` was printed as itself (issue 48).
       constants += name -> (
-        if classes.contains(Term.Const(name)) then arrayValue(Term.Const(name), sort)
+        if classes.contains(Term.Const(name)) then arrayValue(classOf(Term.Const(name)), sort)
         else Model.constArray(Sorts.array(sort), valueOfTerm(Term.Const("@default"), Sorts.applied(sort, 1)))
       )
     // A function into arrays: its graph, an array value per application the problem mentions (issue 27).
@@ -1217,7 +1548,7 @@ private final class Encoder(
     do
       val rows = classes.keys.collect {
         case a @ Term.App(Term.Const(n), args) if n == name && args.length == argSorts.length =>
-          (args.zip(argSorts).map(valueOfTerm), arrayValue(a, sort))
+          (args.zip(argSorts).map(valueOfTerm), arrayValue(classOf(a), sort))
       }.toList
       val default = Model.constArray(Sorts.array(sort), valueOfTerm(Term.Const("@default"), Sorts.applied(sort, 1)))
       functions += name -> Model.Function(argSorts, Sorts.array(sort), rows, default)
@@ -1251,7 +1582,14 @@ private final class Theories(
   def assertLit(lit: Lit): Unit = theories.foreach(_.assertLit(lit))
   def propagate(): Theory.Result = combine(_.propagate())
   override def finalCheck(): Theory.Result = combine(_.finalCheck())
-  def explain(lit: Lit): ArrayBuffer[Lit] = implier.getOrElse(lit.variable, owner(lit.variable)).explain(lit)
+  def explain(lit: Lit): ArrayBuffer[Lit] =
+    val theory = implier.getOrElse(lit.variable, owner(lit.variable))
+    last = theory
+    theory.explain(lit)
+
+  /** The theory of the last conflict or explanation, for its certificate. */
+  private var last: Theory = theories.head
+  override def certificate(): AnyRef | Null = last.certificate()
   override def phase(v: cdclt.Var): Option[Boolean] = owner(v).phase(v)
   def push(): Unit = theories.foreach(_.push())
   def pop(): Unit = theories.foreach(_.pop())
@@ -1262,7 +1600,9 @@ private final class Theories(
     val results = theories.map(theory =>
       check(theory) match
         case Theory.Result.Ok(lits) => (theory, lits)
-        case other => break(other)
+        case other =>
+          last = theory
+          break(other)
     )
     if anyShared() then
       for (theory, lits) <- results; l <- lits if shared(l.variable) do implier(l.variable) = theory

@@ -1,0 +1,17 @@
+; From smtinterpol: proof/datatype/dt_project_1.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-logic QF_UFDT)
+(declare-sort U 0)
+(declare-datatypes ( (List 0) ) (
+ ( (nil) (cons (car U) (cdr List) ))
+))
+(declare-const x List)
+(declare-const y U)
+
+(assert (= x (cons y nil)))
+(assert (not (= (car x) y)))
+(set-info :status unsat)
+(check-sat)
+(get-proof)

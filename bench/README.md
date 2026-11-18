@@ -32,6 +32,8 @@ is then satisfiable: a model that contradicts its script is not. `CoreCheck` doe
 on another platform — the Scala Native binary, `node bench/vik-node.mjs` (with `--stack-size`, since a
 deep script overflows Node's default), a GraalVM image — against the files' statuses, and CI runs the
 hand-written files that way on Scala.js and Scala Native; the corpus test itself is JVM only.
+[fuzz.py](fuzz.py) is a differential fuzzer: random scripts, VIK (through `vik.FuzzBatch`) against z3 and cvc5,
+run by hand; "Fuzzing" in [CONTRIBUTING.md](../CONTRIBUTING.md) says how to run it and reproduce a run.
 
 ## The evaluation page
 

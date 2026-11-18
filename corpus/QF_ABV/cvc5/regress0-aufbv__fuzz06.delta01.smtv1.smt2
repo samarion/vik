@@ -1,0 +1,8 @@
+; From cvc5: regress0/aufbv/fuzz06.delta01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_ABV, the smallest the script fits, for QF_AUFBV (prune logic)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_ABV)
+(declare-fun a5 () (Array (_ BitVec 6) (_ BitVec 11)))
+(declare-fun v2 () (_ BitVec 1))
+(check-sat-assuming ( (=> (= (_ bv0 11) (select a5 ((_ extract 7 2) ((_ sign_extend 9) v2)))) (bvule (select a5 (_ bv0 6)) (_ bv0 11))) ))

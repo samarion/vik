@@ -1,0 +1,18 @@
+; From smtinterpol: lira/tightrhombus-273-245-4b-sat.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+(set-info :source |A tight rhombus without a feasible integer solution.  This
+benchmark is designed to be hard for the algorithm by Dillig, Dillig, and Aiken.
+Authors: The SMTInterpol team|)
+(set-info :category "crafted")
+(set-info :status sat)
+(set-logic QF_UFLIRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(assert (and 
+	(<= 0.0 (- (* 27300000.0 x) (* 24500001.0 y)))
+	(<= (- (* 27300000.0 x) (* 24500001.0 y)) 99999.0)
+	(<= 100000.0 (- (* 27300001.0 x) (* 24500000.0 y)))
+	(<= (- (* 27300001.0 x) (* 24500000.0 y)) 199999.0)))
+(assert (< (+ (- y (to_real (to_int y))) (- x (to_real (to_int x)))) 0.00194))
+(check-sat)
+(get-value ((+ (- y (to_real (to_int y))) (- x (to_real (to_int x))))))
+(exit)

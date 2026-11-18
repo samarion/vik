@@ -1,0 +1,7 @@
+; From cvc5: regress0/opt-abd-no-use.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_LIA)
+(set-info :status sat)
+(set-option :produce-abducts true)
+(declare-fun x () Int)
+(assert (> x 0))
+(check-sat)

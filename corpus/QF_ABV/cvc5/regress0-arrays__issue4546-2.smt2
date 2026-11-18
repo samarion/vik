@@ -1,0 +1,20 @@
+; From cvc5: regress0/arrays/issue4546-2.smt2 (modified BSD, LICENSES/cvc5.txt)
+; COMMAND-LINE: -i
+; EXPECT: sat
+; EXPECT: sat
+; EXPECT: sat
+; EXPECT: unsat
+; logic: QF_ABV, the smallest the script fits, for QF_AUFBV (prune logic)
+(set-logic QF_ABV)
+(declare-const bv_58-0 (_ BitVec 4))
+(set-info :status sat)
+(check-sat)
+(declare-const arr1 (Array (_ BitVec 4) Bool))
+(set-info :status sat)
+(check-sat)
+(assert (xor false true false true true true true true true (select arr1 bv_58-0)))
+(set-info :status sat)
+(check-sat)
+(assert (select arr1 (bvxor bv_58-0 bv_58-0 bv_58-0 (bvlshr bv_58-0 bv_58-0))))
+(set-info :status unsat)
+(check-sat)

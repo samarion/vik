@@ -178,6 +178,58 @@ jobs:
           bench/evaluate.sh regen
           git diff --exit-code docs/_docs/evaluation.md
 
+  lean:
+    # The Lean proofs (proofs/lean): the library builds and its theorems use only Lean's standard axioms,
+    # then the end-to-end set (proofs/lean/e2e.txt, chosen to cover the corpus's logics, justifications,
+    # lowering rules and operators) is solved, exported and checked by the kernel, `decide +kernel`, with
+    # nothing trusted beyond it. The rest of the corpus is the lean-native job's.
+    if: github.ref_type != 'tag'
+    name: lean (kernel, end-to-end set)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+      - name: Lean and the library (lake build, cached)
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: proofs/lean
+          test: false
+      - name: The library's theorems use only the standard axioms
+        run: cd proofs/lean && lake env lean Axioms.lean
+      - name: Export the end-to-end set
+        run: proofs/lean/export.sh proofs/lean/e2e.txt "$RUNNER_TEMP/e2e"
+      - name: Check it in the kernel
+        run: proofs/lean/check-exports.sh "$RUNNER_TEMP/e2e" kernel 2
+  lean-native:
+    # Every exported proof of the corpus list (proofs/lean/corpus.txt, the scripts of the corpus sample
+    # that export), checked by `native_decide`: the same checkers as compiled code, which trusts Lean's
+    # compiler, in minutes where the kernel takes hours on the largest proofs.
+    if: github.ref_type != 'tag'
+    name: lean (native_decide, corpus)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+      - name: Lean and the library (lake build, cached)
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: proofs/lean
+          test: false
+      - name: Export the corpus list
+        run: proofs/lean/export.sh proofs/lean/corpus.txt "$RUNNER_TEMP/corpus"
+      - name: Check it with native_decide
+        run: proofs/lean/check-exports.sh "$RUNNER_TEMP/corpus" native
+
   publish:
     # Releases the tag's version (`vX.Y.Z` publishes X.Y.Z) to Maven Central: the six library modules,
     # each on JVM, Scala.js and Scala Native. sbt-ci-release signs with the key of the PGP_SECRET and

@@ -40,6 +40,21 @@ class ValuesTest extends munit.FunSuite:
       )
     )
 
+  test("an array indexed by bit-vectors is read at its indices"):
+    // The indices were abstract elements, `|@(_ BitVec 4)!0|`: a read at `x` missed its row (issue 138).
+    assertEquals(
+      run(
+        """(declare-const a (Array (_ BitVec 4) (_ BitVec 4))) (declare-const x (_ BitVec 4))
+             (declare-const y (_ BitVec 4)) (declare-const arr (Array (_ BitVec 4) Int))
+             (declare-const rest (Array (_ BitVec 4) Int)) (assert (= (select a x) #x5)) (assert (= (select a y) #x6))
+             (assert (= arr (store rest y 1))) (check-sat) (get-value (x y (select a x) (select a y) (select arr y) a))"""
+      ),
+      List(
+        "sat",
+        "((x #b0000) (y #b0001) ((select a x) #b0101) ((select a y) #b0110) ((select arr y) 1) (a (store (store ((as const (Array (_ BitVec 4) (_ BitVec 4))) #b0000) #b0000 #b0101) #b0001 #b0110)))"
+      )
+    )
+
   test("operations under a select, an ite, a macro: literals of their sort"):
     // Where the lowering mints constants, the value is computed instead (issue 48).
     assertEquals(
@@ -63,6 +78,21 @@ class ValuesTest extends munit.FunSuite:
         "(declare-const a (Array Int Int)) (declare-fun f ((Array Int Int)) Int) (assert (= (f (store a 0 1)) 7)) (assert (= (f a) 3)) (check-sat) (get-value ((f (store a 0 1)) (f (store (store a 0 1) 0 1))))"
       ),
       List("sat", "(((f (store a 0 1)) 7) ((f (store (store a 0 1) 0 1)) 7))")
+    )
+
+  test("an array field of a datatype value is an array"):
+    // It was an abstract element, `|@(-> Int Int)!0|`: `x` was not `(C a)` in the model, and arithmetic
+    // on a read of the field threw `not a number` (issue 139).
+    assertEquals(
+      run(
+        """(declare-datatype D ((C (arr (Array Int Int))))) (declare-const x D) (declare-const y D)
+           (declare-const a (Array Int Int)) (assert (= x (C a))) (assert (= (select a 3) 7)) (assert ((_ is C) y))
+           (check-sat) (get-value (x (select (arr x) 3) (+ (select (arr y) 0) 1)))"""
+      ),
+      List(
+        "sat",
+        "((x (C (store ((as const (Array Int Int)) 0) 3 7))) ((select (arr x) 3) 7) ((+ (select (arr y) 0) 1) 1))"
+      )
     )
 
   test("a function symbol is answered as a lambda over its graph"):

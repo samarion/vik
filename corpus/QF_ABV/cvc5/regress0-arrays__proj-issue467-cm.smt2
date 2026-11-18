@@ -1,0 +1,12 @@
+; From cvc5: regress0/arrays/proj-issue467-cm.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; logic: QF_ABV, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_ABV)
+(declare-const a (Array (_ BitVec 8) (_ BitVec 8))) 
+(declare-const b (Array (_ BitVec 8) (_ BitVec 8))) 
+(declare-const x (_ BitVec 8)) 
+(declare-const y (_ BitVec 8)) 
+(declare-const z (_ BitVec 4))
+(assert (and (= (bvadd #b00000001 (bvneg (select b #b00000000))) x) (= b (store a #b00000001 x))))
+(set-info :status sat)
+(check-sat)

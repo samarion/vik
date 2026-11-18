@@ -1,0 +1,8 @@
+; From cvc5: regress0/uflia/xs-09-16-3-4-1-5.delta05.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_UFLIA)
+(declare-fun select_format (Int) Int)
+(declare-fun adr_lo () Int)
+(declare-fun arg1 () Int)
+(check-sat-assuming ( (and (= (select_format arg1) adr_lo) (or (= adr_lo 0) (= adr_lo (select_format 1)))) ))

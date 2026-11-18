@@ -1,0 +1,7 @@
+; From cvc5: regress0/simple-rdl.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_RDL)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(check-sat-assuming ( (not (=> (< (- x y) 0.0) (< x y))) ))

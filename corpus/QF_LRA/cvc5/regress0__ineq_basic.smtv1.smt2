@@ -1,0 +1,6 @@
+; From cvc5: regress0/ineq_basic.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_LRA)
+(declare-fun x () Real)
+(check-sat-assuming ( (and (<= 0.0 x) (< x 0.0)) ))

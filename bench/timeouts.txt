@@ -10,8 +10,6 @@ PrincessBench.api:20210219-Sydr__symbolic_memory__nested__cjpeg__predicate_150
 Z3Bench.api:asn1jvm__2899
 Cvc5Bench.api:asn1jvm__2899
 Cvc5Bench.text:asn1jvm__2899
-VikBench.api:valid-BitsTricks__2
-VikBench.text:valid-BitsTricks__2
 PrincessBench.api:valid-Factorial__0
 PrincessBench.api:invalid-BadConcRope__59
 PrincessBench.api:valid-LawTypeArgsElim__24

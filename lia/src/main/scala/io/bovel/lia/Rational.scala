@@ -59,6 +59,7 @@ sealed abstract class Rational extends Ordered[Rational]:
 
   def signum: Int
   def isZero: Boolean = signum == 0
+  def abs: Rational = if signum < 0 then -this else this
   def isInteger: Boolean
 
   /** The greatest integer not above this number. */

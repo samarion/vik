@@ -63,6 +63,11 @@ a variable pattern catches everything after it.
 (check-sat)
 ```
 
+A datatype must be well-founded, as the standard asks: one of its constructors takes only fields that have
+values without it. `(declare-datatype T ((c (next T))))` has no value and is refused, as is a group of
+datatypes that only have values through one another. An array field counts for its indices and its
+elements, and a parametric datatype is judged at each instance.
+
 A parametric datatype — `(declare-datatype List (par (T) ...))` — is a datatype per instance, `(List Int)`,
 `(List Bool)`: see [sort parameters](#sort-parameters) below.
 
@@ -144,6 +149,10 @@ An instance of `f` at `Int` is the monomorphic symbol `f@Int`, declared the firs
 instance of `List` at `Int` is the datatype `(List Int)` with constructors `nil@Int` and `cons@Int`. That is
 what models and `get-value` print, and what the [lowered script](../components/vik.md) contains: the
 solver never sees a sort parameter.
+
+A parameter is a name of its declaration only. It may be the name of a sort of the script, `T` in
+`(par (T) ...)` beside `(declare-sort T 0)`: in the declaration `T` is then the parameter, and the datatype
+is instantiated at the sort `T` like at any other.
 
 A use must determine its instance: `(f x)` binds `X` to the sort of `x`, `(as nil (List Int))` names it,
 and a use that does neither — a constant of sort `X` on its own — is refused with a message asking for

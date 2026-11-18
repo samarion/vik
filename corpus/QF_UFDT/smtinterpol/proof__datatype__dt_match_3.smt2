@@ -1,0 +1,25 @@
+; From smtinterpol: proof/datatype/dt_match_3.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-logic QF_UFDT)
+(declare-sort U 0)
+(declare-datatypes ( (List 0) (Tree 0) ) (
+ ( (nil) (cons (car U) (cdr List) ))
+ ( (leaf (data U)) (node (left Tree) (right Tree)) )
+))
+
+(declare-const d Tree)
+(declare-fun p0 (U) U)
+(declare-fun p1 (Tree Tree) U)
+(declare-fun p2 (Tree) U)
+
+(assert (not (= (match d (((leaf x) (p0 x))
+                          ((node x y) (p1 x y))
+                          ((leaf x) (p0 (p0 x)))
+			  (x (p2 x))))
+                (ite ((_ is leaf) d) (p0 (data d)) (p1 (left d) (right d))))))
+
+(set-info :status unsat)
+(check-sat)
+(get-proof)

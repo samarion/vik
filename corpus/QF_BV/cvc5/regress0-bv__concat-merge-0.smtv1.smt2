@@ -1,0 +1,6 @@
+; From cvc5: regress0/bv/core/concat-merge-0.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 32))
+(check-sat-assuming ( (not (= (concat ((_ extract 2 1) x) ((_ extract 0 0) x)) ((_ extract 2 0) x))) ))

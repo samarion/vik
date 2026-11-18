@@ -1,0 +1,6 @@
+; From cvc5: regress0/bv/mult-pow2-negative.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_BV)
+(set-info :status sat)
+(declare-fun x () (_ BitVec 4))
+(assert (not (= (bvmul (bvneg (bvmul #b1111 #b1111)) #b1111) x)))
+(check-sat)

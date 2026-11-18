@@ -1,0 +1,6 @@
+; From cvc5: regress0/parser/quoted-define-fun.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_BV)
+(define-fun |def_B definitions| () Bool true)
+(assert |def_B definitions|)
+(set-info :status sat)
+(check-sat)

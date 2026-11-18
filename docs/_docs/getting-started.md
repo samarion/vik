@@ -56,7 +56,8 @@ Two options bound the search, and are answered honestly when they stop it:
 happens between them: Boolean propagation, congruence closure, explanations, arithmetic past 64 bits — in
 units of about 4 ns on the JVM, so the same script gives the same answer on every machine;
 `:timeout` is milliseconds, for interactive use. Both answer `unknown`, with `resourceout` or `timeout` as
-the reason.
+the reason. A third option, `:check-models`, checks the model of every `sat` against the assertions (see
+[the tour](guide.md#models-and-cores)).
 
 To run the solver as a native binary or on Node.js, see [the evaluation](evaluation.md), which measures all
 three.

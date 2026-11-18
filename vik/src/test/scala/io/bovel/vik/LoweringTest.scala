@@ -46,6 +46,39 @@ class LoweringTest extends munit.FunSuite:
       )
     )
 
+  test("a pop keeps what a global declaration asserts (issue 145)"):
+    // Under `:global-declarations` the constant outlives its level, and its range, asserted there, did not:
+    // it is asserted below every level instead.
+    val global = "(set-option :global-declarations true)"
+    val x = "(declare-const x (_ BitVec 1))"
+    def assertions(script: String): List[Command] = Lowering(Parser.parse(script)).commands.filter {
+      case Command.Assert(_) | Command.AssertGlobal(_) => true
+      case _ => false
+    }
+    val range = And(List(Le(Num(0), Const("x")), Le(Const("x"), Num(1))))
+    assertEquals(assertions(s"$global(push 1)$x(pop 1)"), List(Command.AssertGlobal(range)))
+    assertEquals(assertions(s"$global$x"), List(Command.AssertGlobal(range)))
+    // The lowered script names it by a command of its own, which SMT-LIB does not have.
+    assertEquals(Printer.print(Command.AssertGlobal(range)), "(assert-global (and (<= 0 x) (<= x 1)))")
+    // Without the option the range is the level's, like the declaration.
+    assertEquals(assertions(s"(push 1)$x(pop 1)"), List(Command.Assert(range)))
+    // It holds after one `pop`, after two levels popped at once, and when the option is turned off
+    // before the `pop`, which does not undo the declaration.
+    val wide = "(assert (bvugt x #b1))(check-sat)"
+    for script <- List(
+        s"$global(push 1)$x(pop 1)$wide",
+        s"$global(push 2)$x(pop 2)$wide",
+        s"$global(push 2)$x(pop 1)(pop 1)$wide",
+        s"$global(push 1)$x(set-option :global-declarations false)(pop 1)$wide",
+        s"$global(push 1)$x(check-sat)(pop 1)$wide"
+      )
+    do assertEquals(Session.run(Parser.parse(script)).last, "unsat", script)
+    // A `get-assertions` shows it once, at any depth.
+    assertEquals(
+      Session.run(Parser.parse(s"$global(push 1)$x(pop 1)(push 1)(pop 1)(get-assertions)")),
+      List("((and (<= 0 x) (<= x 1)))")
+    )
+
   private def minted(script: String, prefix: String): Int =
     Lowering(Parser.parse(script)).commands.count {
       case Command.DeclareFun(name, _, _) => name.startsWith(prefix + "!")

@@ -1,0 +1,13 @@
+; From cvc5: regress0/bug544.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; EXPECT: (((not (select a x)) false))
+; logic: QF_AX, the smallest the script fits, for QF_AUFLIA (prune logic)
+(set-option :produce-models true)
+(set-logic QF_AX)
+(declare-sort U 0)
+(declare-fun x () U)
+(declare-fun a () (Array U Bool))
+(assert (select a x))
+(set-info :status sat)
+(check-sat)
+(get-value ((not (select a x))))

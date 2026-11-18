@@ -1,0 +1,11 @@
+; From cvc5: regress0/proofs/subtype-elim-1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: unsat
+; logic: QF_UFLRA, the smallest the script fits, for UFLRA (prune logic)
+(set-option :simplification none)
+(set-logic QF_UFLRA)
+(declare-fun f (Real) Real)
+(declare-const y Real)
+(declare-const x Real)
+(assert (not (not (and (= (/ 1.0 2.0) (/ 1.0 2.0)) (and (<= x y) (and (<= y x) (distinct (f x) (f y))))))))
+(set-info :status unsat)
+(check-sat)

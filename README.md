@@ -75,7 +75,7 @@ bench/graal.sh                                        # target/graal/vik, the so
 sbt "graal/nativeImageTest; graal/nativeImageTestRun"  # every suite as a native image, run
 ```
 
-The SMT-LIB files used by the tests and the benchmarks are the corpus in [corpus/](corpus/README.md), by logic and origin (SMT-LIB releases, the 2026 submission repository, and the regression suites of cvc5, z3 and princess, with their licenses). The JVM test `CorpusTest` registers one test per file: the answers must be the file's statuses within a fuel (work counted, not timed, so the same on every machine); `corpus/ignore.txt` names the files known to fail, with the reason, and the test asks for a line to be removed when its file passes.
+The SMT-LIB files used by the tests and the benchmarks are the corpus in [corpus/](corpus/README.md), by logic and origin (SMT-LIB releases, the 2026 submission repository, and the regression suites of cvc5, z3 and princess, with their licenses). The JVM test `CorpusTest` registers one test per file: the answers must be the file's statuses within a fuel (work counted, not timed, so the same on every machine), and the model of every `sat` must make the file's assertions true (the session's model-check mode); `corpus/ignore.txt` names the files known to fail, with the reason, and the test asks for a line to be removed when its file passes.
 
 ### Benchmarks
 

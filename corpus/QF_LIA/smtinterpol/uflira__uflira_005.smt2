@@ -1,0 +1,13 @@
+; From smtinterpol: uflira/uflira_005.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-logic QF_UFLIRA)
+(declare-fun i () Int)
+(declare-fun x () Real)
+(assert (= (+ i x) 1))
+(assert (= x 0.5))
+(set-info :status unsat)
+(check-sat)
+(set-option :print-terms-cse false)
+(get-proof)
+

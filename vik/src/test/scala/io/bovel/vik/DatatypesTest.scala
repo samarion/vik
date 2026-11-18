@@ -85,3 +85,20 @@ class DatatypesTest extends munit.FunSuite:
       List("unsat")
     )
   }
+
+  test("an array field read through its selector is the constructor's array"):
+    // The e-graph equates `(arr (C a))` with `a`, but the two were never a pair of arrays to share, so
+    // their reads stayed two unrelated integers for the arithmetic solver, and these were sat (issue 134).
+    def run(text: String) = Session.run(Parser.parse(s"""
+      (declare-datatype D ((C (arr (Array Int Int)))))
+      (declare-const a (Array Int Int)) (declare-const b (Array Int Int)) (declare-const x D)
+      (declare-const i Int) (declare-const j Int)
+      $text
+      (check-sat)"""))
+    assertEquals(run("(assert (not (= (select (arr (C a)) 0) (select a 0))))"), List("unsat"))
+    assertEquals(run("(assert (= x (C a))) (assert (< (select (arr x) 0) (select a 0)))"), List("unsat"))
+    assertEquals(
+      run("(assert (<= i j)) (assert (<= j i)) (assert (not (= (select (arr (C a)) i) (select a j))))"),
+      List("unsat")
+    )
+    assertEquals(run("(assert (not (= (select (arr (C a)) 0) (select b 0))))"), List("sat"))

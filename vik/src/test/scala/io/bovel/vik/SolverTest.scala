@@ -68,6 +68,31 @@ class SolverTest extends munit.FunSuite:
     assertEquals(run("(assert (not (= (select (g a) 1) (select (g b) 1))))"), List("unsat"))
     assertEquals(run("(assert (= (f a) (f b)))"), List("sat"))
 
+  test("arrays under a function with no integer or store around"):
+    // The pass that pairs the arrays under a function or a constructor ran only beside an arithmetic term
+    // or a store; and the equalities it made got their witnesses only when the same round of the passes
+    // emitted a clause, which the last two scripts' rounds do not, with or without an integer (issue 133).
+    def run(text: String) = Session.run(io.bovel.smtlib.Parser.parse(s"""
+      (declare-const a1 (Array Bool Bool)) (declare-const a2 (Array Bool Bool))
+      (declare-const a3 (Array Bool Bool)) (declare-const a4 (Array Bool Bool))
+      (declare-const a5 (Array Bool Bool))
+      $text
+      (check-sat)"""))
+    val agree = "(assert (= (select a1 true) (select a2 true))) (assert (= (select a1 false) (select a2 false)))"
+    val p = "(declare-fun p ((Array Bool Bool)) Bool)"
+    val f = "(declare-sort U 0) (declare-fun f ((Array Bool Bool)) U)"
+    val mk = "(declare-datatype P ((mk (arr (Array Bool Bool)))))"
+    assertEquals(run(s"$p (assert (distinct (p a1) (p a2))) $agree"), List("unsat"))
+    assertEquals(run(s"$mk (assert (distinct (mk a1) (mk a2))) $agree"), List("unsat"))
+    // Bool to Bool has four arrays: five applications cannot be distinct, four can.
+    assertEquals(run(s"$mk (assert (distinct (mk a1) (mk a2) (mk a3) (mk a4) (mk a5)))"), List("unsat"))
+    assertEquals(run(s"$f (assert (distinct (f a1) (f a2) (f a3) (f a4) (f a5)))"), List("unsat"))
+    assertEquals(
+      run(s"$f (declare-const x Int) (assert (> x 0)) (assert (distinct (f a1) (f a2) (f a3) (f a4) (f a5)))"),
+      List("unsat")
+    )
+    assertEquals(run(s"$f (assert (distinct (f a1) (f a2) (f a3) (f a4)))"), List("sat"))
+
   test("push and pop"):
     val s = Solver()
     s.assert(a === b)

@@ -110,7 +110,9 @@ and the lowering is one function of the solver, `io.bovel.vik.Lowering`: it take
 the lowered script, declaring the constants each assertion needs and asserting their definitions before
 it, so the script that VIK plays is a `QF_LIA` script. The player applies it before playing. Two
 ways to see it: `(get-assertions)` in a script answers with the lowered assertion stack, and
-`sbt "vik/runMain io.bovel.vik.lower file.smt2"` prints a whole file as VIK will play it.
+`sbt "vik/runMain io.bovel.vik.lower file.smt2"` prints a whole file as VIK will play it. One command there
+is VIK's own: under `:global-declarations`, a constant's range is printed `(assert-global ...)`, an assertion
+below every level, which a `pop` does not take back and which SMT-LIB has no way to write.
 
 ```smt2
 (set-logic QF_BV)

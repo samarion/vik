@@ -1,0 +1,12 @@
+; From cvc5: regress0/arrays/issue13040-to-real-index.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: unsat
+(set-logic QF_AUFLIRA)
+(set-info :status unsat)
+(declare-const x Int)
+(declare-const A (Array Real Bool))
+(assert (>= x 0))
+(assert (<= x 0))
+(assert (select A (to_real x)))
+(assert (not (select A 0.0)))
+(set-info :status unsat)
+(check-sat)

@@ -1,0 +1,8 @@
+; From cvc5: regress0/issue5743.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_ABV, the smallest the script fits, for QF_AUFBV (prune logic)
+(set-logic QF_ABV)
+(set-info :status sat)
+(declare-fun bv_22-0 () (_ BitVec 1))
+(declare-fun arr-8324605531633220487_-1461211092162269148-0 () (Array (_ BitVec 1) Bool))
+(assert (select arr-8324605531633220487_-1461211092162269148-0 (bvlshr bv_22-0 bv_22-0)))
+(check-sat)

@@ -1,0 +1,6 @@
+; From cvc5: regress0/bv/bug260b.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_BV)
+(declare-fun a () (_ BitVec 32))
+(check-sat-assuming ( (= (_ bv0 5) (concat (_ bv0 3) ((_ extract 6 5) a))) ))

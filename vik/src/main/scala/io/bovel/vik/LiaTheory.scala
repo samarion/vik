@@ -31,8 +31,15 @@ final class LiaTheory(
   // Note the side effect: the theory turns splitting on demand on in the solver it is given.
   solver.splitOnDemand = newBound != null
 
-  /** A conflict found while asserting, reported by the next `propagate`. */
+  /** A conflict found while asserting, reported by the next `propagate`, with
+   *  its certificate when the solver gives them (`lia.Solver.proofs`).
+   */
   private var conflict: ArrayBuffer[Lit] | Null = null
+  private var conflictCertificate: lia.Certificate | Null = null
+
+  /** The certificate of the last conflict or explanation (see [[certificate]]).
+   */
+  private var last: lia.Certificate | Null = null
 
   /** Atoms asserted so far, with the level marks for `pop`; an implied atom is
    *  asserted by the solver in turn, so this is also what `propagate` skips.
@@ -42,14 +49,19 @@ final class LiaTheory(
   private val assignedTrail = ArrayBuffer.empty[Int]
   private val marks = ArrayBuffer.empty[Int]
 
-  /** For each atom implied, the reasons of the bounds that implied it. */
+  /** For each atom implied, the reasons of the bounds that implied it, and with
+   *  proofs, the certificate of its explanation, taken when it was implied: the
+   *  bound may have changed by the time the explanation is asked for.
+   */
   private val reasonsOf = ArrayBuffer.empty[Set[Int] | Null]
+  private val certificateOf = ArrayBuffer.empty[lia.Certificate | Null]
 
   private def grown(): Unit =
     while assigned.length < atoms.length do
       val v = assigned.length
       assigned += false
       reasonsOf += null
+      certificateOf += null
       // A bound atom is indexed by its variable, and looked at when that variable's bounds move; a new
       // one is looked at once, whether they moved or not.
       atoms(v) match
@@ -89,7 +101,9 @@ final class LiaTheory(
               case lia.Solver.Result.Sat => solver.assertLower(x, c, lit.index)
               case unsat => unsat
       result match
-        case lia.Solver.Result.Unsat(reasons) => conflict = lits(reasons)
+        case lia.Solver.Result.Unsat(reasons) =>
+          conflict = lits(reasons)
+          conflictCertificate = solver.conflictCertificate
         case lia.Solver.Result.Sat => ()
         // Asserting a bound never runs the search, so it can neither be told to stop nor ask for a split.
         case lia.Solver.Result.Unknown | lia.Solver.Result.Split(_, _) =>
@@ -145,6 +159,7 @@ final class LiaTheory(
             solver.decidesUpper(x, c) match
               case Some((holds, reasons)) =>
                 reasonsOf(v) = reasons
+                if solver.proofs then certificateOf(v) = solver.decidedCertificate(x, c, holds, Lit(v, !holds).index)
                 out += Lit(v, holds)
               case None => ()
           case _ => ()
@@ -160,18 +175,28 @@ final class LiaTheory(
     val pending = conflict
     if pending != null then
       conflict = null
+      last = conflictCertificate
       Theory.Result.Conflict(pending)
     else
       check match
         case lia.Solver.Result.Sat => Theory.Result.Ok(implied())
         case lia.Solver.Result.Unknown => Theory.Result.Unknown
-        case lia.Solver.Result.Unsat(reasons) => Theory.Result.Conflict(lits(reasons))
+        case lia.Solver.Result.Unsat(reasons) =>
+          last = solver.conflictCertificate
+          Theory.Result.Conflict(lits(reasons))
         // The atom is new: one for the same split would be assigned at a final check, and its bound would
         // keep `x` off the open interval. The right side first, where a first decision would go (the
         // relaxation has `x` above `c`).
         case lia.Solver.Result.Split(x, c) => Theory.Result.Split(newBound.nn(x, c).neg)
 
-  def explain(lit: Lit): ArrayBuffer[Lit] = lits(reasonsOf(lit.variable).nn)
+  def explain(lit: Lit): ArrayBuffer[Lit] =
+    if solver.proofs then last = certificateOf(lit.variable)
+    lits(reasonsOf(lit.variable).nn)
+
+  /** A `lia.Certificate` deriving a contradiction from the negations of the
+   *  literals of the last conflict or explanation.
+   */
+  override def certificate(): AnyRef | Null = last
 
   def push(): Unit =
     marks += assignedTrail.length
@@ -180,6 +205,7 @@ final class LiaTheory(
   def pop(): Unit =
     touched = true // undone bounds: atoms may need re-implying
     conflict = null
+    conflictCertificate = null
     val mark = marks.remove(marks.length - 1)
     while assignedTrail.length > mark do assigned(assignedTrail.remove(assignedTrail.length - 1)) = false
     solver.pop()
