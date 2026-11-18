@@ -21,6 +21,8 @@ final class Interactive(proofs: Boolean = false):
   // The proof of an `unsat` is written at the check: `check-sat-assuming` pops its assumptions right
   // after, and the proof is made of them.
   session.keepLeanProofs = proofs
+  // A model is asked for after its `check-sat`, which must keep it: there is no script to look ahead in.
+  session.solver.produceModels = true
   private var printSuccess = false
 
   /** Answers the commands of `in` on `out`, until `(exit)` or the end of `in`.
@@ -131,8 +133,8 @@ object Interactive:
       case "set-option" :: key :: value :: _ => Some((key, value))
       case _ => None
 
-  /** The proof terms of [[Session.leanProof]] as a Lean file that `lake env lean` checks in
-   *  `proofs/lean`, as the corpus runner writes them.
+  /** The proof terms of [[Session.leanProof]] as a Lean file that
+   *  `lake env lean` checks in `proofs/lean`, as the corpus runner writes them.
    */
   def leanFile(proof: String): String =
     s"import Vik\n\nnamespace Vik.Low.Exported.Proof\n\nopen Vik.Low Vik.Surf Vik.Clausal\n\n$proof\nend Vik.Low.Exported.Proof\n"

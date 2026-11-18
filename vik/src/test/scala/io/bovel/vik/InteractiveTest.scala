@@ -41,6 +41,11 @@ class InteractiveTest extends munit.FunSuite:
     assert(responses(1).startsWith("(error"), responses(1))
     assertEquals(responses.drop(2), List("success", "success", "unsat"))
 
+  test("a model is kept for the get-model after its check-sat"):
+    val responses = serve("(declare-const x Int) (assert (= x 3)) (check-sat) (get-model)")
+    assertEquals(responses.head, "sat")
+    assert(responses.tail.mkString(" ").contains("3"), responses.mkString("\n"))
+
   test("get-proof needs --proofs"):
     val responses = serve("(declare-const x Int) (assert (< x x)) (check-sat) (get-proof)")
     assertEquals(responses.head, "unsat")
