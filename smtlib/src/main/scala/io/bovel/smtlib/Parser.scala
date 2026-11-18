@@ -669,8 +669,20 @@ final class Parser:
   private def scripted(name: String, env: Map[String, Sort]): Boolean =
     !env.contains(name) && (functions.contains(name) || macros.contains(name))
 
+  /** `(is-C t)`, the tester of constructor `C` as SMT-LIB 2.5 and Z3 spell it,
+   *  as `((_ is C) t)`, unless the script declares `is-C` itself.
+   */
+  private def legacyTester(sexpr: SExpr, env: Map[String, Sort]): Option[SExpr] = sexpr match
+    case SList(SSymbol(name) :: arg :: Nil) if name.startsWith("is-") && !scripted(name, env) && !env.contains(name) =>
+      val c = name.drop(3)
+      if constructors.contains(c) || owner.contains(c) then
+        Some(SList(List(SList(List(SSymbol("_"), SSymbol("is"), SSymbol(c))), arg)))
+      else None
+    case _ => None
+
   private def sortOf(sexpr: SExpr, env: Map[String, Sort]): Sort = sexpr match
     case SSymbol("true" | "false") => Sort.Bool
+    case _ if legacyTester(sexpr, env).isDefined => Sort.Bool
     case SList(SSymbol(name) :: args) if scripted(name, env) =>
       macros.get(name).map(_._2).getOrElse(applied(functions(name), args.length))
     case SNumeral(_) => Sort.Int
@@ -762,6 +774,7 @@ final class Parser:
   private def formula(sexpr: SExpr, env: Map[String, Sort]): Formula = sexpr match
     case SSymbol("true") => True
     case SSymbol("false") => False
+    case _ if legacyTester(sexpr, env).isDefined => formula(legacyTester(sexpr, env).get, env)
     case SList(SSymbol(name) :: _) if scripted(name, env) => predicate(sexpr, env)
     case SList(SSymbol(q @ ("forall" | "exists")) :: _) => throw Smt2Error(s"$q: quantifiers are not supported")
     case SList(SSymbol("not") :: arg :: Nil) => Not(formula(arg, env))
@@ -882,6 +895,7 @@ final class Parser:
   private def term(sexpr: SExpr, env: Map[String, Sort]): Term = sexpr match
     case SSymbol("true") => Term.Bool(True)
     case SSymbol("false") => Term.Bool(False)
+    case _ if legacyTester(sexpr, env).isDefined => Term.Bool(formula(sexpr, env))
     case SList(SSymbol(name) :: args) if scripted(name, env) => application(name, args, env)
     case SList(SSymbol(q @ ("forall" | "exists")) :: _) => throw Smt2Error(s"$q: quantifiers are not supported")
     // A formula-shaped tree where a term is expected (an argument, a field).
