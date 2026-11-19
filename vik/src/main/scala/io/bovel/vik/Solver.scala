@@ -1249,6 +1249,12 @@ private final class Encoder(
     // free of arithmetic but not of the e-graph's disequalities: its class gets a value of its own, past
     // every value known, and not the 0 that `(not (= x (mk 0)))` forbids (issue 26).
     var nextFresh = classValues.values.maxOption.getOrElse(BigInt(0)).max(BigInt(0)) + 1
+    // A sum whose terms the simplex never saw, a constructor's field (`Acc(c − x, s + x)`): computed from the
+    // values its terms get, and not a fresh value of its own, which a check of the field's definition finds false.
+    lazy val sumOf =
+      if liaSolver.hasReals then Map.empty[EClassId, Term.Linear]
+      else classes.iterator.collect { case (t: Term.Linear, c) => eg.find(c) -> t }.toMap
+    val summing = HashSet.empty[EClassId] // against a sum over its own class
     def freshInt(root: EClassId): BigInt =
       classValues.getOrElseUpdate(
         root, {
@@ -1271,6 +1277,8 @@ private final class Encoder(
     // from the selectors' classes when the problem has them and fresh values otherwise — one that
     // differs from every other such class's, since the e-graph may keep them apart (issue 26).
     val builtValues = HashMap.empty[EClassId, Term]
+    val builtSorts = HashMap.empty[EClassId, Datatype] // the datatype of each built class
+    val nodeValues = HashMap.empty[EClassId, Term] // the value of each class with a constructor node, once taken
     // What the built values have to avoid: two classes of one value make one row of a function's graph out of
     // two, with results that may differ. The values of the classes with a constructor node and no number or
     // built class under them are known up front; the built ones are added as they come.
@@ -1315,6 +1323,35 @@ private final class Encoder(
         if args.isEmpty then Term.Const(c.name) else Term.App(Term.Const(c.name), args)
       case Some(_) => elementOf(sort, eg.newClass())
       case None => valueOfTerm(Term.Const("@default"), sort)
+    // How many fields deep a value of each sort can hold a number, for the sorts that can.
+    lazy val numberDepth: Map[String, Int] =
+      val depth = HashMap("Int" -> 0, "Real" -> 0)
+      var changed = true
+      while changed do
+        changed = false
+        for d <- datatypes; c <- d.constructors; (_, s) <- c.selectors; k <- depth.get(s.text) do
+          if depth.get(d.name).forall(_ > k + 1) then
+            depth(d.name) = k + 1
+            changed = true
+      depth.toMap
+    // A value of `sort` that no other value has: a fresh number at the end of the shortest path of fields to one.
+    def freshOf(sort: String): Term = sort match
+      case "Int" => Term.Num(freshInt(eg.newClass()))
+      case "Real" => Model.rationalTerm(freshReal(eg.newClass()))
+      case _ =>
+        val toNumber = (s: String) => numberDepth.get(s).exists(k => numberDepth.get(sort).contains(k + 1))
+        datatypes.find(_.name == sort).flatMap(_.constructors.find(_.selectors.exists((_, s) =>
+          toNumber(s.text)
+        ))) match
+          case Some(c) =>
+            val slot = c.selectors.indexWhere((_, s) => toNumber(s.text))
+            Term.App(
+              Term.Const(c.name),
+              c.selectors.zipWithIndex.map((f, i) =>
+                if i == slot then freshOf(f._2.text) else defaultOf(f._2.text, Set.empty)
+              )
+            )
+          case None => defaultOf(sort, Set.empty)
     def builtValue(datatype: Datatype, root: EClassId, seen: Set[EClassId]): Term =
       builtValues.getOrElseUpdate(
         root, {
@@ -1334,25 +1371,72 @@ private final class Encoder(
               case None if s.text == "Real" => Model.rationalTerm(freshReal(eg.newClass()))
               case None => defaultOf(s.text, Set.empty)
           }
-          var built: Term = if args.isEmpty then Term.Const(c.name) else Term.App(Term.Const(c.name), args)
-          // Past the taken values, through a recursive constructor, unless the problem reads the fields. A few
-          // steps only: the walk hashes the value at each one.
-          val recursive = candidates.find(_.selectors.exists(_._2.text == datatype.name))
-          if c.selectors.forall((selector, _) => selectorOf(root, selector).isEmpty) then
-            for r <- recursive do
-              var steps = 0
-              while steps < 64 && takenValues(built) do
-                // In one field only: a rope with the value in both doubles at each step.
-                val slot = r.selectors.indexWhere(_._2.text == datatype.name)
-                built = Term.App(
-                  Term.Const(r.name),
-                  r.selectors.zipWithIndex.map((f, i) => if i == slot then built else defaultOf(f._2.text, Set.empty))
-                )
-                steps += 1
-            takenValues += built
+          val first: Term = if args.isEmpty then Term.Const(c.name) else Term.App(Term.Const(c.name), args)
+          val built = past(datatype, root, first, seen, takenValues)
+          takenValues += built
+          builtSorts(root) = datatype
           built
         }
       )
+    // `built`, the value of the class `root`, or a value past those of `taken`: through a recursive constructor,
+    // unless the problem reads the fields, then with fresh numbers.
+    def past(datatype: Datatype, root: EClassId, start: Term, seen: Set[EClassId], taken: Term => Boolean): Term =
+      val candidates = datatype.constructors.filter(c => !testerOf(root, c.tester).contains(false))
+      val head = start match
+        case Term.App(Term.Const(name), _) => name
+        case Term.Const(name) => name
+        case _ => ""
+      val readsFields = datatype.constructors.exists(c =>
+        c.name == head && c.selectors.exists((selector, _) => selectorOf(root, selector).isDefined)
+      )
+      var built = start
+      // Past the taken values, through a recursive constructor, unless the problem reads the fields. A few
+      // steps only: the walk hashes the value at each one.
+      val recursive = candidates.find(_.selectors.exists(_._2.text == datatype.name))
+      if !readsFields then
+        for r <- recursive do
+          var steps = 0
+          while steps < 64 && taken(built) do
+            // In one field only: a rope with the value in both doubles at each step.
+            val slot = r.selectors.indexWhere(_._2.text == datatype.name)
+            built = Term.App(
+              Term.Const(r.name),
+              r.selectors.zipWithIndex.map((f, i) => if i == slot then built else defaultOf(f._2.text, Set.empty))
+            )
+            steps += 1
+      // Still a taken value: a field that can hold a number, at any depth, set to fresh ones. The defaults
+      // are the same for every class (`Some(Pair(A(0), B(0)))` for two results of one function, whose
+      // tests then differ).
+      if taken(built) then
+        candidates.find(_.selectors.exists((_, s) => numberDepth.contains(s.text))).foreach { d =>
+          built = Term.App(
+            Term.Const(d.name),
+            d.selectors.map { (selector, s) =>
+              selectorOf(root, selector) match
+                case Some(field) => valueOfClass(field, s.text, seen + root)
+                case None => freshOf(s.text)
+            }
+          )
+        }
+      built
+    // The value of an integer class: the simplex's, or else its sum's (see `sumOf`), or else a fresh one.
+    def intOfClass(root: EClassId): BigInt = classValues.get(root) match
+      case Some(v) => v
+      case None =>
+        sumOf.get(root).filter(_ => summing.add(root)) match
+          case Some(Term.Linear(terms, c)) =>
+            val sum = terms.foldLeft(c) { case (s, (a, u)) =>
+              s +
+                a *
+                (valueOfTerm(u, "Int") match
+                  case Term.Num(v) => v
+                  case _ => BigInt(0))
+            }
+            summing -= root
+            nextFresh = nextFresh.max(sum + 1) // the fresh values stay past it
+            classValues(root) = sum
+            sum
+          case _ => freshInt(root)
     def valueOfClass(cls: EClassId, sort: String, seen: Set[EClassId]): Term =
       datatypes.find(_.name == sort) match
         case Some(datatype) =>
@@ -1363,14 +1447,19 @@ private final class Encoder(
             val constructor = datatype.constructors.find(c => eg.find(classes(Term.Const(c.name))) == eg.find(node.fun))
             constructor match
               case Some(c) =>
-                val args = node.args.toList.zip(c.selectors).map((a, s) =>
-                  valueOfClass(a, s._2.text, seen + eg.find(cls))
+                // Once per class: a value is a tree over a graph of classes, which shares its subtrees.
+                nodeValues.getOrElseUpdate(
+                  eg.find(cls), {
+                    val args = node.args.toList.zip(c.selectors).map((a, s) =>
+                      valueOfClass(a, s._2.text, seen + eg.find(cls))
+                    )
+                    if args.isEmpty then Term.Const(c.name) else Term.App(Term.Const(c.name), args)
+                  }
                 )
-                if args.isEmpty then Term.Const(c.name) else Term.App(Term.Const(c.name), args)
               case None => builtValue(datatype, eg.find(cls), seen)
         case None =>
           sort match
-            case s if integral(s) => Term.Num(freshInt(eg.find(cls)))
+            case s if integral(s) => Term.Num(intOfClass(eg.find(cls)))
             case "Real" => Model.rationalTerm(freshReal(eg.find(cls)))
             case "Bool" => Term.boolean(if eg.find(cls) == eg.find(trueTerm) then Formula.True else Formula.False)
             // An array, as a constructor's field: its value as an array, where an abstract element was
@@ -1378,6 +1467,18 @@ private final class Encoder(
             // inside its own value, through an array of the datatype: only there is it an element.
             case _ if Sorts.arrow(sort).isDefined && !arraysBeingValued(eg.find(cls)) => arrayValue(cls, sort)
             case _ => elementOf(sort, cls)
+    // A selector's application that is in no class, a term of a sum (`s + x` in `Acc(c − x, s + x)`): the
+    // field of its argument's value, which the check reads it as.
+    def fieldOf(t: Term): Option[Term] = t match
+      case Term.App(Term.Const(selector), List(u)) if classes.contains(u) =>
+        datatypes.iterator.flatMap(_.constructors).collectFirst {
+          case c if c.selectors.exists(_._1 == selector) => (c, c.selectors.indexWhere(_._1 == selector))
+        }.flatMap { (c, i) =>
+          valueOfTerm(u, sortOf(u)) match
+            case Term.App(Term.Const(name), args) if name == c.name => Some(args(i))
+            case _ => None
+        }
+      case _ => None
     def valueOfTerm(t: Term, sort: String): Term =
       (t, sort) match
         case (Term.Num(_), _) => t // a literal argument of an application
@@ -1390,7 +1491,8 @@ private final class Encoder(
           else Model.constArray(Sorts.array(s), valueOfTerm(Term.Const("@default"), Sorts.applied(s, 1)))
         case (_, s) if integral(s) =>
           intVars.get(t).map(x => Term.Num(liaSolver.value(x)))
-            .orElse(classes.get(t).map(c => Term.Num(freshInt(eg.find(c)))))
+            .orElse(classes.get(t).map(c => Term.Num(intOfClass(eg.find(c)))))
+            .orElse(fieldOf(t))
             .getOrElse(Term.Num(0))
         case (_, "Real") =>
           intVars.get(t).map(x => Model.rationalTerm(liaSolver.realValue(x)))
@@ -1441,6 +1543,64 @@ private final class Encoder(
           rows.toList.sortBy(_._1.toString).foldLeft(start) { case (acc, (i, v)) => Model.store(acc, i, v) }
         }
       )
+    // Two classes of one value make one row of a function's graph out of two, with results that may differ.
+    // A built value avoids the values known when it is built, not those built later over a built class (`S(b)`
+    // for a built `b`, against another built class: `Factorial`). Each collision moves a built class under one of
+    // the two past every value, and the values are taken again, for a few rounds.
+    if datatypes.nonEmpty then
+      val datatypeClasses =
+        classes.iterator.collect { case (t, c) if datatypeNames(sortOf(t)) => eg.find(c) -> sortOf(t) }.toMap
+      // The built classes a class's value is made of, nearest first: through constructor nodes and read fields.
+      def builtUnder(cls: EClassId): Iterator[EClassId] =
+        val visited = HashSet.empty[EClassId]
+        val queue = scala.collection.mutable.Queue(eg.find(cls))
+        Iterator.unfold(()) { _ =>
+          var found: Option[EClassId] = None
+          while found.isEmpty && queue.nonEmpty && visited.size < 1000 do
+            val root = queue.dequeue()
+            if visited.add(root) then
+              if builtValues.contains(root) then
+                found = Some(root)
+                for d <- builtSorts.get(root); c <- d.constructors; (selector, _) <- c.selectors do
+                  selectorOf(root, selector).foreach(f => queue += eg.find(f))
+              else
+                val node = adt.map(_.node(eg, root)).orNull
+                if node != null then queue ++= node.args.map(eg.find)
+          found.map(_ -> ())
+        }
+      val numbered = HashMap.empty[Term, Boolean] // per subterm: a value shares its subtrees
+      def holdsNumbers(value: Term): Boolean = value match
+        case Term.Num(_) => true
+        case Term.App(_, args) => numbered.getOrElseUpdate(value, args.exists(holdsNumbers))
+        case _ => false
+      var rounds = 0
+      var collided = true
+      while collided && rounds < 16 do
+        collided = false
+        rounds += 1
+        val byValue = HashMap.empty[Term, EClassId]
+        val moved = HashSet.empty[EClassId]
+        for (root, sort) <- datatypeClasses do
+          val value = valueOfClass(root, sort, Set.empty)
+          byValue.get(value) match
+            case None => byValue(value) = root
+            // Numbers are the simplex's: two classes may have to hold the same ones, which the e-graph has not
+            // merged (`Acc`), and a pair of integer arguments is settled by the search (`neededEquality`).
+            case Some(_) if holdsNumbers(value) => ()
+            case Some(other) =>
+              (builtUnder(root) ++ builtUnder(other)).filterNot(moved).find { b =>
+                val current = builtValues(b)
+                val next = past(builtSorts(b), b, current, Set.empty, v => takenValues(v) || byValue.contains(v))
+                if next == current then false
+                else
+                  builtValues(b) = next
+                  takenValues += next
+                  true
+              }.foreach { b =>
+                moved += b
+                collided = true
+              }
+        if collided then nodeValues.clear()
     val constants = Map.newBuilder[String, Term]
     val functions = Map.newBuilder[String, Model.Function]
     for

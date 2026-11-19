@@ -390,8 +390,6 @@ QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e58.smt2	skip: the encoding runs past t
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e64.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e70.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e80.smt2	skip: out of the search's reach (over 30 s as a native binary)
-QF_UFDT/stainless/invalid-i1295__3.smt2	model: distinct free values of an infinite datatype get one value (#127)
-QF_UFDT/stainless/valid-Factorial__0.smt2	model: lowered assertion 92 (=> b!29 (= e!14 (plus!0 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 (S!2 O!2)))))))))))) (mult!0 (n!45 (n!45 (n!45 (S...
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__17512_5c1021b0faa6b6e1791b_19_QF_UFDTLIA.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__3106_1c933134166dbad31f79_40_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__3106_1c933134166dbad31f79_41_QF_UFDTLIA.smt2	timeout (5 s limit)
@@ -408,14 +406,6 @@ QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_3_UFDTLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDTLIA/smtinterpol/interpolation__datatype__dt_project007.smt2	wrong: sat when a shared pair differs by a numeral (issue 136)
 QF_UFDTLIA/smtinterpol/proof__datatype__dt_project_int_2.smt2	wrong: sat for x = (cons (+ 1 (car x)) nil), a shared pair that differs by a numeral (issue 136)
-QF_UFDTLIA/stainless/valid-GodelNumbering__187.smt2	model: distinct free values of an infinite datatype get one value (#127)
-QF_UFDTLIA/stainless/valid-GodelNumbering__33.smt2	model: distinct free values of an infinite datatype get one value (#127)
-QF_UFDTLIA/stainless/valid-GodelNumbering__73.smt2	model: distinct free values of an infinite datatype get one value (#127)
-QF_UFDTLIA/stainless/valid-NotEquals__0.smt2	model: a class holding a linear term gets a fresh value (#137)
-QF_UFDTLIA/stainless/valid-RedundantlyTypedPatterns__2.smt2	model: lowered assertion 6 (=> b!23 (= e!16 (isEmpty!5 (unapply!3 (_2!2 (get!4 (unapply!3 moc!4))))))) is false
-QF_UFDTLIA/stainless/valid-RedundantlyTypedPatterns__5.smt2	model: lowered assertion 6 (=> b!44 (= e!34 (isEmpty!8 (unapply!6 (_2!5 (get!6 (unapply!6 moc!13))))))) is false
-QF_UFDTLIA/stainless/valid-i1379g__2.smt2	model: lowered assertion 171 (=> b!1320 (= e!699 (Animal!7 (get!10 (InstanceOf!5 lambda!882 lambda!886 (_1!2 (get!8 ($colon$colon!3 (get!9 (InstanceOf!6 lamb...
-QF_UFDTLIA/stainless/valid-i1379g__3.smt2	model: distinct free values of an infinite datatype get one value (#127)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f21.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f42.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f52.smt2	timeout (5 s limit)
