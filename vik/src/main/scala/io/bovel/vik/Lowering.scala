@@ -273,10 +273,10 @@ private final class Lowerer:
       values.forall(_ == values.head)
     case s2.Formula.Eq(as) =>
       val values = as.map(eval(_, model, scope))
-      values.zip(values.tail).forall(Model.same)
+      values.zip(values.tail).forall((a, b) => Model.same(a, b, sizeOf))
     case s2.Formula.Distinct(as) =>
       val values = as.map(eval(_, model, scope))
-      values.zipWithIndex.forall((a, i) => values.drop(i + 1).forall(b => !Model.same(a, b)))
+      values.zipWithIndex.forall((a, i) => values.drop(i + 1).forall(b => !Model.same(a, b, sizeOf)))
     case s2.Formula.Cmp(op, as) =>
       val values = as.map(a => rational(eval(a, model, scope)))
       values.zip(values.tail).forall((a, b) =>
@@ -493,6 +493,9 @@ private final class Lowerer:
       // array from a function by that.
       List(Command.DeclareFun(name, argSorts.map(sortString), sortString(sort)))
     case s2.Command.DeclareDatatypes(datatypes) =>
+      for datatype <- datatypes do
+        undoable(declaredDatatypes, datatype.name)
+        declaredDatatypes(datatype.name) = datatype
       for datatype <- datatypes; constructor <- datatype.constructors do
         val d = Sort.Named(datatype.name)
         undoable(functions, constructor.name)
@@ -539,6 +542,10 @@ private final class Lowerer:
       rationalValues.clear()
       storeSymbols.clear()
       constSymbols.clear()
+      declaredDatatypes.clear()
+      finiteSorts.clear()
+      finiteTexts.clear()
+      pendingFinite.clear()
       mapSymbols.clear()
       templates.clear()
       clearMemos()
@@ -577,11 +584,14 @@ private final class Lowerer:
   /** What the lowering introduced, as declarations: a map of arrays with its
    *  template.
    */
-  private def declarations(): List[Command] = introduced.toList.map((name, sort) =>
-    templates.get(name) match
-      case Some(pointwise) => Command.DeclareMap(name, sort, pointwise)
-      case None => Command.DeclareFun(name, Nil, sort)
-  )
+  private def declarations(): List[Command] =
+    val out = introduced.toList.map((name, sort) =>
+      templates.get(name) match
+        case Some(pointwise) => Command.DeclareMap(name, sort, pointwise)
+        case None => Command.DeclareFun(name, Nil, sort)
+    ) ++ pendingFinite
+    pendingFinite.clear()
+    out
 
   /** The introduced declarations and defining assertions, then the command. */
   private def flush(command: Command): List[Command] =
@@ -985,6 +995,105 @@ private final class Lowerer:
         }
       )
 
+  /** The datatypes declared, as written: a field keeps its bit-vector sort,
+   *  which the solver's datatypes have lowered to `Int` (see [[lowered]]).
+   */
+  private val declaredDatatypes = HashMap.empty[String, s2.Datatype]
+
+  /** The finite index sorts of the constant arrays and maps, by the solver's
+   *  name for them, whose count and values went to the solver: undone with the
+   *  level of their datatype, which a later declaration may name anew.
+   */
+  private val finiteSorts = HashMap.empty[String, BigInt]
+  private val pendingFinite = ArrayBuffer.empty[Command]
+  private val finiteTexts = HashMap.empty[String, BigInt] // as the script writes them, for the values of arrays
+
+  /** How many values an index sort has, as the script writes it, where it is
+   *  known.
+   */
+  private def sizeOf(text: String): Option[BigInt] = text match
+    case "Bool" => Some(BigInt(2))
+    case Model.bitVector(width) => Some(BigInt(2).pow(width.nn.toInt))
+    case _ => finiteTexts.get(text).orElse(finiteSorts.get(text)) // a model's array may carry the solver's name
+
+  /** At most this many values of a finite index sort are listed for the solver:
+   *  it reads an array at them all once its writes may fill the sort, which
+   *  takes as many writes, and answers `unknown` for a larger sort they fill.
+   */
+  private val listedValues = BigInt(4096)
+  private val manyValues = BigInt(1) << 62
+
+  /** Tells the solver how many values the index sort of a constant array or a
+   *  map has, and lists them while they are few ([[Command.DeclareFinite]]),
+   *  for a finite sort other than `Bool` and the bit-vectors, which the solver
+   *  knows: the index it takes beyond the writes ([[Encoder.beyond]]) is apart
+   *  from fewer of them than the sort has values, and the arrays are read at
+   *  every value from then on. The solver's datatypes have their bit-vector
+   *  fields lowered to `Int`, and it could not count them.
+   */
+  private def noteIndex(arraySort: Sort): Unit = arraySort match
+    case Sort.Array(Sort.Bool | Sort.BitVec(_), _) => ()
+    case Sort.Array(index, _) =>
+      val key = indexString(index)
+      if !finiteSorts.contains(key) then
+        for n <- cardinality(index) do
+          undoable(finiteSorts, key)
+          finiteSorts(key) = n
+          val values = if n <= listedValues then valuesOf(index).map(term(_, Map.empty)) else Nil
+          undoable(finiteTexts, index.text)
+          finiteTexts(index.text) = n
+          pendingFinite += Command.DeclareFinite(key, index.text, n, values)
+    case _ => ()
+
+  /** How many values a sort has, `None` for infinitely many: `Bool`, a
+   *  bit-vector, a datatype with no field of an infinite sort or of its own, an
+   *  array between finite sorts or into a sort of one value. An uninterpreted
+   *  sort has as many as a model needs. Capped at [[manyValues]].
+   */
+  private def cardinality(sort: Sort, open: Set[String] = Set.empty): Option[BigInt] = sort match
+    case Sort.Bool => Some(BigInt(2))
+    case Sort.BitVec(w) => Some(if w >= 62 then manyValues else BigInt(2).pow(w))
+    case Sort.Named(name) if !open(name) =>
+      declaredDatatypes.get(name).flatMap { d =>
+        val counts = d.constructors.map(_.selectors.foldLeft(Option(BigInt(1)))((acc, field) =>
+          for n <- acc; m <- cardinality(field._2, open + name) yield (n * m).min(manyValues)
+        ))
+        if counts.forall(_.isDefined) then Some(counts.flatten.sum.min(manyValues)) else None
+      }
+    case Sort.Array(index, element) =>
+      (cardinality(index, open), cardinality(element, open)) match
+        case (_, Some(m)) if m == 1 => Some(m)
+        case (Some(n), Some(m)) => Some(if n >= 64 then manyValues else m.pow(n.toInt).min(manyValues))
+        case _ => None
+    case _ => None
+
+  /** The values of a finite sort, as terms: a constructor over the values of
+   *  its fields, an array as a constant array with a store at every index.
+   */
+  private def valuesOf(sort: Sort): List[s2.Term] = sort match
+    case Sort.Bool => List(s2.Term.Bool(s2.Formula.True), s2.Term.Bool(s2.Formula.False))
+    case Sort.BitVec(w) => List.tabulate(1 << w)(k => s2.Term.Bits(BigInt(k), w))
+    case Sort.Named(name) =>
+      declaredDatatypes(name).constructors.flatMap(c =>
+        if c.selectors.isEmpty then List(s2.Term.Const(c.name))
+        else
+          combinations(c.selectors.map((_, s) => valuesOf(s))).map(args => s2.Term.App(s2.Term.Const(c.name), args))
+      )
+    case Sort.Array(index, element) =>
+      val elements = valuesOf(element)
+      if elements.length == 1 then List(s2.Term.ConstArray(sort, elements.head))
+      else
+        val indices = valuesOf(index)
+        combinations(indices.map(_ => elements)).map(at =>
+          indices.zip(at).foldLeft(s2.Term.ConstArray(sort, elements.head): s2.Term) { case (a, (i, v)) =>
+            s2.Term.Store(a, i, v)
+          }
+        )
+    case _ => throw s2.Smt2Error(s"the values of the infinite sort ${sort.text}")
+
+  private def combinations[A](choices: List[List[A]]): List[List[A]] =
+    choices.foldRight(List(List.empty[A]))((options, rest) => for o <- options; r <- rest yield o :: r)
+
   /** The `array.const!N` function symbol for the constant arrays of `sort`,
    *  declared on first use like a [[storeSymbol]]: a function of the element to
    *  the array, which the solver's array lemmas recognize by the name.
@@ -992,6 +1101,7 @@ private final class Lowerer:
   private val constSymbols = HashMap.empty[String, String]
 
   private def constSymbol(arraySort: Sort): Term =
+    noteIndex(arraySort)
     val key = sortString(arraySort)
     val name = constSymbols.getOrElseUpdate(
       key, {
@@ -1028,6 +1138,7 @@ private final class Lowerer:
       result: Sort,
       arrays: List[Term]
   ): Term =
+    noteIndex(result)
     val keys = arraySorts.map(sortString)
     val resultKey = sortString(result)
     if (resultKey :: keys).exists(s2.Sorts.arrow(_).isEmpty) then

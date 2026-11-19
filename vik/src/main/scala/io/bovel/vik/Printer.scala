@@ -29,6 +29,8 @@ object Printer:
     case Command.DeclareFun(name, argSorts, sort) =>
       s"(declare-fun ${symbol(name)} (${argSorts.mkString(" ")}) $sort)"
     case Command.DeclareMap(name, sort, _) => s"(declare-fun ${symbol(name)} () $sort)"
+    case Command.DeclareFinite(sort, _, size, values) => // VIK's own: see the command
+      s"(declare-finite $sort $size (${values.map(print).mkString(" ")}))"
     case Command.DeclareDatatypes(datatypes) => // every name as the script would write it (issue 33)
       val sorts = datatypes.map(d => s"(${symbol(d.name)} 0)").mkString(" ")
       val declarations = datatypes.map { d =>

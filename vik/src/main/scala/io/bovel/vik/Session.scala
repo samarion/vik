@@ -216,6 +216,9 @@ final class Session(
       case s.Result.Unknown(s.Reason.Model(what)) =>
         failed(s"lowered $what")
         "unknown"
+      case s.Result.Unknown(s.Reason.Incomplete(_)) =>
+        reason = Some("incomplete")
+        "unknown"
       case s.Result.Unknown(_) =>
         reason = Some(if late then "timeout" else if out then "resourceout" else "canceled")
         "unknown"
@@ -223,6 +226,7 @@ final class Session(
   private def declare(command: Command): Unit = command match
     case Command.DeclareFun(name, argSorts, sort) => current.declare(name, argSorts, sort)
     case Command.DeclareMap(name, sort, pointwise) => current.declare(name, sort, pointwise)
+    case Command.DeclareFinite(sort, text, size, values) => current.declareFinite(sort, text, size, values)
     case Command.DeclareDatatypes(datatypes) => datatypes.foreach(current.declare)
     case _ => ()
 
@@ -296,7 +300,8 @@ final class Session(
           declarations += command
           if declaredAt.length > 1 && !globalDeclarations then declaredAt.last += command
           declare(command)
-        case Command.DeclareMap(_, _, _) => // kept past the pop of its level: the lowering keeps the symbol
+        case Command.DeclareMap(_, _, _) | Command.DeclareFinite(_, _, _, _) =>
+          // kept past the pop of its level: the lowering keeps the symbol
           lastCheck = ""
           declarations += command
           declare(command)

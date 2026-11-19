@@ -48,6 +48,12 @@ final class Solver(val simplify: Boolean = true):
      */
     case Model(failure: String)
 
+    /** The search met what it does not decide completely, which `what` names: a
+     *  constant array or a map over a finite sort its writes may fill, of too
+     *  many values to list (`incomplete`).
+     */
+    case Incomplete(what: String)
+
   private val levels = ArrayBuffer(ArrayBuffer.empty[Formula])
 
   /** The persistent encoder, built at the first [[solve]] — so that the first
@@ -88,6 +94,23 @@ final class Solver(val simplify: Boolean = true):
 
   /** What each declared map of arrays holds at an index (see [[Pointwise]]). */
   private[vik] val maps = HashMap.empty[String, Pointwise]
+
+  /** The finite index sorts of the constant arrays and maps other than `Bool`
+   *  and the bit-vectors: how many values each has, and the values while they
+   *  are few (see [[Command.DeclareFinite]]).
+   */
+  private[vik] val finiteSorts = HashMap.empty[String, (BigInt, List[Term])]
+
+  /** Their counts, by the solver's name for them and as the script writes them:
+   *  the model's arrays carry either.
+   */
+  private[vik] val finiteSizes = HashMap.empty[String, BigInt]
+
+  def declareFinite(sort: String, text: String, size: BigInt, values: List[Term]): Unit =
+    if finiteSorts.get(sort).exists(_ != (size, values)) then dirty = true
+    finiteSorts(sort) = (size, values)
+    finiteSizes(sort) = size
+    finiteSizes(text) = size
 
   /** Declares a map of arrays: the symbol, and the auxiliaries of what it holds
    *  at an index, each a function of the elements there.
@@ -275,6 +298,12 @@ final class Solver(val simplify: Boolean = true):
         encoder = null
         lastCore = Nil
         Result.Unknown(Reason.Stopped)
+      case e: Encoder.Incomplete =>
+        // As for a stop: the pass that threw is half done, and the next solve builds another encoder.
+        encoder.nn.addCounts(retired)
+        encoder = null
+        lastCore = Nil
+        Result.Unknown(Reason.Incomplete(e.what))
     finally
       bigWords += lia.Rational.bigWords - bigWordsStart
       overflows += lia.Rational.overflows - overflowsStart
@@ -329,7 +358,7 @@ final class Solver(val simplify: Boolean = true):
   private def decide(keepGoing: () => Boolean): Result =
     if encoder == null || dirty then
       if encoder != null then encoder.nn.addCounts(retired)
-      val e = Encoder(declarations, datatypes.toList, maps, () => anyStore, () => asked())
+      val e = Encoder(declarations, datatypes.toList, maps, finiteSorts, finiteSizes, () => anyStore, () => asked())
       encoder = e
       encoded.clear()
       encoded ++= declarations
@@ -450,10 +479,17 @@ private object Encoder:
   /** Thrown by [[Encoder.step]] when the solve's `keepGoing` says to stop. */
   object Stopped extends scala.util.control.ControlThrowable
 
+  /** Thrown when the search meets what it does not decide completely (see
+   *  [[Solver.Reason.Incomplete]]).
+   */
+  final class Incomplete(val what: String) extends scala.util.control.ControlThrowable
+
 private final class Encoder(
     declarations: HashMap[String, (List[String], String)],
     datatypes: List[Datatype],
     maps: HashMap[String, Pointwise], // what each map of arrays holds at an index
+    finiteSorts: HashMap[String, (BigInt, List[Term])], // the finite index sorts, their counts and values
+    finiteSizes: HashMap[String, BigInt], // their counts, under either name (see Solver.finiteSizes)
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
     keepGoing: () => Boolean // of the solve under way (see Solver.solve)
 ):
@@ -892,9 +928,9 @@ private final class Encoder(
    *  array: reading there carries the value of a constant array through the
    *  stores over it, so that `((as const A) 0)` with finitely many writes is
    *  not `((as const A) 1)`. There is one while the sort has more values than
-   *  the stores' indices; a bit-vector sort they may fill is listed instead
-   *  (see [[settling]]), and a constant array over another finite sort is
-   *  refused.
+   *  the stores' indices; a finite sort they may fill is listed instead (see
+   *  [[settling]]): a bit-vector's values the solver knows, another's the
+   *  lowering counts and lists ([[Command.DeclareFinite]]).
    */
   private val beyondIndices = scala.collection.mutable.HashMap.empty[String, Term]
   private val beyondDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
@@ -917,7 +953,7 @@ private final class Encoder(
           clauses += Array(lit(Formula.Le(Term.Num(0), w)))
           clauses += Array(lit(Formula.Le(w, Term.Num(BigInt(2).pow(width.nn.toInt) - 1))))
           w
-        case _ if finite(sort) =>
+        case _ if finite(sort) && !finiteSorts.contains(sort) =>
           throw io.bovel.smtlib.Smt2Error(s"a constant array or a map over the finite sort $sort")
         case _ =>
           introduced(name) = sort
@@ -934,11 +970,17 @@ private final class Encoder(
   private def settling(sort: String): List[Term] = sort match
     case "Bool" => List(Term.boolean(Formula.True), Term.boolean(Formula.False))
     case Encoder.bitVector(width) if listedSorts(sort) => beyond(sort) :: values(width.nn.toInt)
+    case _ if listedSorts(sort) =>
+      finiteSorts(sort) match
+        case (_, Nil) =>
+          throw Encoder.Incomplete(s"a constant array or a map over $sort, of too many values to list")
+        case (_, listed) => beyond(sort) :: listed
     case _ => List(beyond(sort))
 
   private def values(width: Int): List[Term] = List.tabulate(1 << width)(k => Term.Num(BigInt(k)))
 
   private val arrayWritesDone = scala.collection.mutable.HashSet.empty[Term]
+  private val exhausted = scala.collection.mutable.HashSet.empty[(String, Term)]
   private val arrayReadsDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
 
   def arrayLemmas(): Unit = if anyStore() then
@@ -964,7 +1006,7 @@ private final class Encoder(
         if beyondDone.add((w, s.args(1))) then
           val room = indexSort match
             case Encoder.bitVector(width) => BigInt(2).pow(width.nn.toInt) - 1
-            case _ => BigInt(-1) // an infinite sort
+            case _ => finiteSorts.get(indexSort).fold(BigInt(-1))(_._1 - 1) // -1: an infinite sort
           val apart = beyondApart.getOrElse(indexSort, 0)
           if room >= 0 && apart >= room then listedSorts += indexSort
           else
@@ -998,6 +1040,15 @@ private final class Encoder(
               else equalAt(elementSort, selectTerm(m, j), value)
             )
           )
+    // An index read of a listed sort other than the bit-vectors is one of its values, as the arithmetic
+    // says of a bit-vector's: the reads at them all then settle what an array holds there. The datatypes
+    // the search knows have their bit-vector fields as integers, and would take another.
+    for (sort, js) <- indices.toList do
+      val indexSort = Sorts.arrow(sort).get._1.head
+      if listedSorts(indexSort) then
+        for (_, listed) <- finiteSorts.get(indexSort); j <- js.toList do
+          if !listed.contains(j) && exhausted.add((indexSort, j)) then
+            clauses += listed.map(v => lit(equalAt(indexSort, j, v))).toArray
     def equalAt(sort: String, l: Term, r: Term): Formula =
       if sort == "Int" || sort == "Real" then Formula.IntEq(l, r) else Formula.Eq(l, r)
     for case s @ Term.App(_, List(a, i, v)) <- stores do
@@ -1456,7 +1507,10 @@ private final class Encoder(
         }.toList
         val default = rows.headOption.map(_._2).getOrElse(valueOfTerm(Term.Const("@default"), sort))
         functions += name -> Model.Function(argSorts, sort, rows, default)
-    Model(constants.result(), functions.result(), datatypes, maps.toMap)
+    val constSorts = declarations.collect {
+      case (name, (Nil, sort)) if name.startsWith("array.const!") => name -> Sorts.array(Sorts.applied(sort, 1))
+    }.toMap
+    Model(constants.result(), functions.result(), datatypes, maps.toMap, finiteSizes.toMap, constSorts)
 
 /** Several theories over disjoint sets of atoms, asserted and checked in turn,
  *  without exchange of equalities between them; `owner(v)` is the theory of the

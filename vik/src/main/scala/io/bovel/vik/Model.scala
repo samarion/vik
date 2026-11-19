@@ -17,8 +17,16 @@ final case class Model(
     constants: Map[String, Term],
     functions: Map[String, Model.Function],
     datatypes: List[io.bovel.smtlib.Datatype] = Nil,
-    maps: Map[String, Pointwise] = Map.empty
+    maps: Map[String, Pointwise] = Map.empty,
+    finite: Map[String, BigInt] = Map.empty, // the finite index sorts other than Bool and the bit-vectors
+    constSorts: Map[String, String] = Map.empty // the array sort of each `array.const!N`
 ):
+  /** How many values an index sort has, where the model knows it. */
+  private def sizeOf(sort: String): Option[BigInt] = sort match
+    case "Bool" => Some(BigInt(2))
+    case Model.bitVector(width) => Some(BigInt(2).pow(width.nn.toInt))
+    case _ => finite.get(sort)
+
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
   private lazy val selectors: Map[String, (String, Int)] =
@@ -43,7 +51,8 @@ final case class Model(
         case _ => constants.getOrElse(name, term)
     case Term.App(Term.Const(name), List(a, i, v)) if name.startsWith("store!") =>
       Model.store(value(a), value(i), value(v))
-    case Term.App(Term.Const(name), List(d)) if name.startsWith("array.const!") => Model.constArray("?", value(d))
+    case Term.App(Term.Const(name), List(d)) if name.startsWith("array.const!") =>
+      Model.constArray(constSorts.getOrElse(name, "?"), value(d))
     case Term.App(Term.Const(name), arrays) if maps.contains(name) =>
       // At an index, the template under the elements there. An auxiliary is valued by its definition
       // where that has the shape [[defined]] reads, and through its graph otherwise.
@@ -102,7 +111,9 @@ final case class Model(
   private def lookup(name: String, values: List[Term]): Term = functions.get(name) match
     // Array arguments are compared extensionally: a row keyed by a store read back is one (issue 49).
     case Some(f) =>
-      f.rows.collectFirst { case (a, r) if a.length == values.length && a.zip(values).forall(Model.same) => r }
+      f.rows.collectFirst {
+        case (a, r) if a.length == values.length && a.zip(values).forall((x, y) => Model.same(x, y, sizeOf)) => r
+      }
         .getOrElse(f.default)
     case None => Term.App(Term.Const(name), values)
 
@@ -116,7 +127,7 @@ final case class Model(
     case Formula.Implies(a, b) => !holds(a) || holds(b)
     case Formula.Iff(a, b) => holds(a) == holds(b)
     case Formula.Ite(c, t, e) => if holds(c) then holds(t) else holds(e)
-    case Formula.Eq(l, r) => Model.same(value(l), value(r))
+    case Formula.Eq(l, r) => Model.same(value(l), value(r), sizeOf)
     // Failing closed: a side the model has no number for makes no bound hold (issue 35).
     case Formula.Le(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ <= _)
     case Formula.Less(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ < _)
@@ -185,10 +196,30 @@ object Model:
     case _ => (array, Map.empty)
 
   /** Whether two values are the same: arrays extensionally (their elements
-   *  likewise, for arrays of arrays), the rest as terms.
+   *  likewise, for arrays of arrays), the rest as terms. Two arrays of
+   *  different defaults are the same when they agree at indices that are every
+   *  value of their index sort, whose count `size` gives.
    */
-  def same(a: Term, b: Term): Boolean =
+  def same(a: Term, b: Term, size: String => Option[BigInt] = _ => None): Boolean =
     if isArray(a) && isArray(b) then
       val ((da, ma), (db, mb)) = (graph(a), graph(b))
-      same(da, db) && ma.keySet == mb.keySet && ma.forall((i, v) => same(v, mb(i)))
+      val keys = (ma.keySet ++ mb.keySet).toList
+      keys.forall(i => same(select(a, i), select(b, i), size)) &&
+      (same(da, db, size) ||
+        indexSort(a).orElse(indexSort(b)).flatMap(size).exists(n => BigInt(distinct(keys, size).length) >= n))
     else a == b
+
+  /** The values among `values`, each once: an array value has more than one
+   *  form.
+   */
+  private def distinct(values: List[Term], size: String => Option[BigInt]): List[Term] =
+    values.foldLeft(List.empty[Term])((seen, v) => if seen.exists(same(_, v, size)) then seen else v :: seen)
+
+  /** The index sort of an array value, from its constant array's sort. */
+  private def indexSort(array: Term): Option[String] = array match
+    case Term.App(Term.Const("store"), List(a, _, _)) => indexSort(a)
+    case Term.App(Term.Const(name), List(_)) if name.startsWith("(as const (Array ") =>
+      io.bovel.smtlib.Sorts.arrow(s"(-> ${name.stripPrefix("(as const (Array ").dropRight(2)})").map(_._1.head)
+    case _ => None
+
+  private[vik] val bitVector = """\(_ BitVec (\d+)\)""".r

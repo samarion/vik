@@ -19,6 +19,13 @@ enum Command:
    *  `pop` of its level, as the symbol stays the lowering's for the operator.
    */
   case DeclareMap(name: String, sort: String, pointwise: Pointwise)
+
+  /** That the index sort `sort` (`text` as the script writes it) of a constant
+   *  array or a map has `size` values, which are `values` when listed (empty
+   *  when too many): the lowering's, which sees the bit-vector fields of the
+   *  datatypes, and kept past the `pop` of its level, as a [[DeclareMap]] is.
+   */
+  case DeclareFinite(sort: String, text: String, size: BigInt, values: List[Term])
   case Assert(formula: Formula)
 
   /** An assertion below every level, which no `pop` takes back: what a

@@ -434,6 +434,73 @@ class SolverTest extends munit.FunSuite:
     )
   }
 
+  test("a constant array or a map over any finite sort is read at its every value once the writes may fill it") {
+    def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(script))
+    val record = "(declare-datatypes ((R 0)) (((mk (fld (_ BitVec 1)))))) "
+    val colors = "(declare-datatypes ((C 0)) (((r) (g) (b)))) "
+    val f = "(define-fun f () (Array Bool Bool) ((as const (Array Bool Bool)) false)) "
+    def filled(sort: String, indices: List[String]) =
+      indices.foldLeft(s"((as const (Array $sort Int)) 0)")((a, i) => s"(store $a $i 1)")
+    def isOne(sort: String, indices: List[String]) =
+      s"(assert (= ${filled(sort, indices)} ((as const (Array $sort Int)) 1))) (check-sat)"
+    val boolArrays = List("f", "((as const (Array Bool Bool)) true)", "(store f true true)", "(store f false true)")
+    // Writes at every value: satisfiable (cvc5), and were answered `unsat` while these sorts passed for
+    // infinite. A value left: unsatisfiable (cvc5; z3 4.15.1 answers `sat`).
+    assertEquals(play(record + isOne("R", List("(mk #b0)", "(mk #b1)"))), List("sat"))
+    assertEquals(play(record + isOne("R", List("(mk #b0)"))), List("unsat"))
+    assertEquals(play(f + isOne("(Array Bool Bool)", boolArrays)), List("sat"))
+    assertEquals(play(f + isOne("(Array Bool Bool)", boolArrays.take(3))), List("unsat"))
+    assertEquals(play(colors + isOne("C", List("r", "g", "b"))), List("sat"))
+    assertEquals(play(colors + isOne("C", List("r", "g"))), List("unsat"))
+    assertEquals(
+      play(
+        "(declare-datatypes ((U 0)) (((u)))) (assert (= (store ((as const (Array (Array Int U) Int)) 0) ((as const (Array Int U)) u) 1) " +
+          "((as const (Array (Array Int U) Int)) 1))) (check-sat)"
+      ),
+      List("sat")
+    )
+    // Indices the search may make equal, and a read at another index of the sort
+    assertEquals(
+      play(
+        record + "(declare-const i R) (declare-const j R) " + isOne("R", List("i", "j")) +
+          " (push 1) (assert (= i j)) (check-sat) (pop 1) (assert (distinct i j)) (check-sat)"
+      ),
+      List("sat", "unsat", "sat")
+    )
+    assertEquals(
+      play(
+        colors + "(declare-const a (Array C Int)) (declare-const x C) " +
+          "(assert (= a (store (store (store ((as const (Array C Int)) 0) r 1) g 2) b 3))) (assert (> (select a x) 3)) (check-sat)"
+      ),
+      List("unsat")
+    )
+    // A map
+    assertEquals(
+      play(
+        colors + "(declare-const s (Array C Bool)) (declare-const t (Array C Bool)) " +
+          "(assert (= ((_ map or) s t) ((as const (Array C Bool)) true))) (assert (not (select s r))) (assert (not (select t g))) " +
+          "(check-sat) (assert (not (select s b))) (assert (not (select t b))) (check-sat)"
+      ),
+      List("sat", "unsat")
+    )
+    assertEquals(
+      play(
+        f + "(declare-const a (Array (Array Bool Bool) Int)) " +
+          s"(assert (= a ${filled("(Array Bool Bool)", boolArrays)})) " +
+          "(assert (= ((_ map (+ (Int Int) Int)) a ((as const (Array (Array Bool Bool) Int)) 1)) ((as const (Array (Array Bool Bool) Int)) 2))) (check-sat)"
+      ),
+      List("sat")
+    )
+    // A recursive datatype and an uninterpreted sort have room beyond any writes
+    assertEquals(
+      play(
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Bool) (tl L))))) " + isOne("L", List("nil", "(cons true nil)"))
+      ),
+      List("unsat")
+    )
+    assertEquals(play("(declare-sort U 0) (declare-const u U) " + isOne("U", List("u"))), List("unsat"))
+  }
+
   test("a map over a Boolean index is read at both values") {
     def play(script: String) = Session.run(io.bovel.smtlib.Parser.parse(script))
     assertEquals(play("(declare-const a (Array Bool Bool)) (assert (= a ((_ map not) a))) (check-sat)"), List("unsat"))
