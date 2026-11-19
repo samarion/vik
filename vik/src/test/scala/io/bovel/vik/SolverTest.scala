@@ -459,6 +459,11 @@ class SolverTest extends munit.FunSuite:
       ),
       List("sat")
     )
+    // Values of several constructors: 1 + 2 + 2 of them
+    val mixed = "(declare-datatypes ((D 0)) (((a) (b (p Bool)) (c (q (_ BitVec 1)))))) "
+    val ds = List("a", "(b true)", "(b false)", "(c #b0)", "(c #b1)")
+    assertEquals(play(mixed + isOne("D", ds)), List("sat"))
+    assertEquals(play(mixed + isOne("D", ds.init)), List("unsat"))
     // Indices the search may make equal, and a read at another index of the sort
     assertEquals(
       play(

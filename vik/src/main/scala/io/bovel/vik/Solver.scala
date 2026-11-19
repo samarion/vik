@@ -48,12 +48,6 @@ final class Solver(val simplify: Boolean = true):
      */
     case Model(failure: String)
 
-    /** The search met what it does not decide completely, which `what` names: a
-     *  constant array or a map over a finite sort its writes may fill, of too
-     *  many values to list (`incomplete`).
-     */
-    case Incomplete(what: String)
-
   private val levels = ArrayBuffer(ArrayBuffer.empty[Formula])
 
   /** The persistent encoder, built at the first [[solve]] — so that the first
@@ -96,19 +90,19 @@ final class Solver(val simplify: Boolean = true):
   private[vik] val maps = HashMap.empty[String, Pointwise]
 
   /** The finite index sorts of the constant arrays and maps other than `Bool`
-   *  and the bit-vectors: how many values each has, and the values while they
-   *  are few (see [[Command.DeclareFinite]]).
+   *  and the bit-vectors: how many values each has, and how to build the `k`-th
+   *  (see [[Command.DeclareFinite]]).
    */
-  private[vik] val finiteSorts = HashMap.empty[String, (BigInt, List[Term])]
+  private[vik] val finiteSorts = HashMap.empty[String, (BigInt, BigInt => Term)]
 
   /** Their counts, by the solver's name for them and as the script writes them:
    *  the model's arrays carry either.
    */
   private[vik] val finiteSizes = HashMap.empty[String, BigInt]
 
-  def declareFinite(sort: String, text: String, size: BigInt, values: List[Term]): Unit =
-    if finiteSorts.get(sort).exists(_ != (size, values)) then dirty = true
-    finiteSorts(sort) = (size, values)
+  def declareFinite(sort: String, text: String, size: BigInt, value: BigInt => Term): Unit =
+    if finiteSorts.contains(sort) then dirty = true // a sort of its name declared anew, after a pop
+    finiteSorts(sort) = (size, value)
     finiteSizes(sort) = size
     finiteSizes(text) = size
 
@@ -298,12 +292,6 @@ final class Solver(val simplify: Boolean = true):
         encoder = null
         lastCore = Nil
         Result.Unknown(Reason.Stopped)
-      case e: Encoder.Incomplete =>
-        // As for a stop: the pass that threw is half done, and the next solve builds another encoder.
-        encoder.nn.addCounts(retired)
-        encoder = null
-        lastCore = Nil
-        Result.Unknown(Reason.Incomplete(e.what))
     finally
       bigWords += lia.Rational.bigWords - bigWordsStart
       overflows += lia.Rational.overflows - overflowsStart
@@ -479,16 +467,11 @@ private object Encoder:
   /** Thrown by [[Encoder.step]] when the solve's `keepGoing` says to stop. */
   object Stopped extends scala.util.control.ControlThrowable
 
-  /** Thrown when the search meets what it does not decide completely (see
-   *  [[Solver.Reason.Incomplete]]).
-   */
-  final class Incomplete(val what: String) extends scala.util.control.ControlThrowable
-
 private final class Encoder(
     declarations: HashMap[String, (List[String], String)],
     datatypes: List[Datatype],
     maps: HashMap[String, Pointwise], // what each map of arrays holds at an index
-    finiteSorts: HashMap[String, (BigInt, List[Term])], // the finite index sorts, their counts and values
+    finiteSorts: HashMap[String, (BigInt, BigInt => Term)], // the finite index sorts, their counts, their values
     finiteSizes: HashMap[String, BigInt], // their counts, under either name (see Solver.finiteSizes)
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
     keepGoing: () => Boolean // of the solve under way (see Solver.solve)
@@ -970,14 +953,22 @@ private final class Encoder(
   private def settling(sort: String): List[Term] = sort match
     case "Bool" => List(Term.boolean(Formula.True), Term.boolean(Formula.False))
     case Encoder.bitVector(width) if listedSorts(sort) => beyond(sort) :: values(width.nn.toInt)
-    case _ if listedSorts(sort) =>
-      finiteSorts(sort) match
-        case (_, Nil) =>
-          throw Encoder.Incomplete(s"a constant array or a map over $sort, of too many values to list")
-        case (_, listed) => beyond(sort) :: listed
+    case _ if listedSorts(sort) => beyond(sort) :: listing(sort)
     case _ => List(beyond(sort))
 
   private def values(width: Int): List[Term] = List.tabulate(1 << width)(k => Term.Num(BigInt(k)))
+
+  /** The values of a finite index sort the lowering counted, built once it is
+   *  listed: as many as the writes that filled it, and one more.
+   */
+  private val listings = scala.collection.mutable.HashMap.empty[String, List[Term]]
+
+  private def listing(sort: String): List[Term] = listings.getOrElseUpdate(
+    sort, {
+      val (size, value) = finiteSorts(sort)
+      List.tabulate(size.toInt)(k => value(BigInt(k)))
+    }
+  )
 
   private val arrayWritesDone = scala.collection.mutable.HashSet.empty[Term]
   private val exhausted = scala.collection.mutable.HashSet.empty[(String, Term)]
@@ -1046,7 +1037,8 @@ private final class Encoder(
     for (sort, js) <- indices.toList do
       val indexSort = Sorts.arrow(sort).get._1.head
       if listedSorts(indexSort) then
-        for (_, listed) <- finiteSorts.get(indexSort); j <- js.toList do
+        val listed = if finiteSorts.contains(indexSort) then listing(indexSort) else Nil
+        for j <- js.toList if listed.nonEmpty do
           if !listed.contains(j) && exhausted.add((indexSort, j)) then
             clauses += listed.map(v => lit(equalAt(indexSort, j, v))).toArray
     def equalAt(sort: String, l: Term, r: Term): Formula =

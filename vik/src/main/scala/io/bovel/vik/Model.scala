@@ -22,10 +22,7 @@ final case class Model(
     constSorts: Map[String, String] = Map.empty // the array sort of each `array.const!N`
 ):
   /** How many values an index sort has, where the model knows it. */
-  private def sizeOf(sort: String): Option[BigInt] = sort match
-    case "Bool" => Some(BigInt(2))
-    case Model.bitVector(width) => Some(BigInt(2).pow(width.nn.toInt))
-    case _ => finite.get(sort)
+  private def sizeOf(sort: String): Option[BigInt] = Model.knownSize(sort).orElse(finite.get(sort))
 
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
@@ -200,7 +197,7 @@ object Model:
    *  different defaults are the same when they agree at indices that are every
    *  value of their index sort, whose count `size` gives.
    */
-  def same(a: Term, b: Term, size: String => Option[BigInt] = _ => None): Boolean =
+  def same(a: Term, b: Term, size: String => Option[BigInt] = knownSize): Boolean =
     if isArray(a) && isArray(b) then
       val ((da, ma), (db, mb)) = (graph(a), graph(b))
       val keys = (ma.keySet ++ mb.keySet).toList
@@ -220,6 +217,14 @@ object Model:
     case Term.App(Term.Const("store"), List(a, _, _)) => indexSort(a)
     case Term.App(Term.Const(name), List(_)) if name.startsWith("(as const (Array ") =>
       io.bovel.smtlib.Sorts.arrow(s"(-> ${name.stripPrefix("(as const (Array ").dropRight(2)})").map(_._1.head)
+    case _ => None
+
+  /** How many values `Bool` and a bit-vector sort have, which every model
+   *  knows.
+   */
+  def knownSize(sort: String): Option[BigInt] = sort match
+    case "Bool" => Some(BigInt(2))
+    case bitVector(width) => Some(BigInt(2).pow(width.nn.toInt))
     case _ => None
 
   private[vik] val bitVector = """\(_ BitVec (\d+)\)""".r
