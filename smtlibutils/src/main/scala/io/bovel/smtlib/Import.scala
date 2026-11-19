@@ -65,7 +65,8 @@ object Import:
       // every logic is still an array script, not an integer one.
       else if text.contains("(Array ") then
         val functions = "\\(declare-fun \\S+ \\([^)]".r.findFirstIn(text).isDefined || text.contains("declare-sort")
-        if "\\(_ bv\\d+ \\d+\\)|\\(_ BitVec".r.findFirstIn(text).isDefined then if functions then "QF_AUFBV" else "QF_ABV"
+        if "\\(_ bv\\d+ \\d+\\)|\\(_ BitVec".r.findFirstIn(text).isDefined then
+          if functions then "QF_AUFBV" else "QF_ABV"
         else if "\\bInt\\b".r.findFirstIn(text).isDefined then if functions then "QF_AUFLIA" else "QF_ALIA"
         else if functions then "QF_AUFLIA"
         else "QF_AX"
