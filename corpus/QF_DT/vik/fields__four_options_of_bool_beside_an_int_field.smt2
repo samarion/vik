@@ -1,0 +1,15 @@
+; Hand-written for VIK (this repository's license): four `of-Opt` values pairwise apart, `(Opt Bool)` having
+; three values: `none`, `(some true)` and `(some false)` (issue 125, 2026-11-17).
+(set-logic ALL)
+(declare-datatypes ((Opt 0) (Val 0)) (((none) (some (get Bool))) ((of-Int (to-Int Int)) (of-Opt (to-Opt Opt)))))
+(declare-const x Val)
+(declare-const y Val)
+(declare-const z Val)
+(declare-const w Val)
+(assert ((_ is of-Opt) x))
+(assert ((_ is of-Opt) y))
+(assert ((_ is of-Opt) z))
+(assert ((_ is of-Opt) w))
+(assert (distinct x y z w))
+(set-info :status unsat)
+(check-sat)
