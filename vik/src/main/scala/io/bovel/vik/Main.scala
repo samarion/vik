@@ -17,7 +17,7 @@ private def parseFile(path: String) =
  *  With `-in`, the commands come from standard input instead, one response
  *  printed and flushed as each command completes, as tools that drive a solver
  *  process expect (see [[Interactive]]). `--proofs` makes `(get-proof)` answer
- *  the Lean proof of the last `unsat` there.
+ *  the certificate of the last `unsat` there.
  */
 @main def run(args: String*): Unit =
   // The responses in UTF-8 whatever the locale: under `LC_ALL=C` HotSpot's standard output wrote the

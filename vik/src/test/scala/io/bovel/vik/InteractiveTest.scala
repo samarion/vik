@@ -1,7 +1,7 @@
 package io.bovel.vik
 
 /** The solver driven over a stream (`-in`): one response per command, as it
- *  completes, `success` once asked for, and the Lean proof of the last `unsat`
+ *  completes, `success` once asked for, and the certificate of the last `unsat`
  *  on `(get-proof)`.
  */
 class InteractiveTest extends munit.FunSuite:
@@ -51,15 +51,15 @@ class InteractiveTest extends munit.FunSuite:
     assertEquals(responses.head, "unsat")
     assert(responses(1).startsWith("(error"), responses(1))
 
-  test("get-proof answers the Lean proof of the last unsat, after check-sat-assuming popped"):
+  test("get-proof answers the certificate of the last unsat, after check-sat-assuming popped"):
     val responses = serve(
       "(set-option :print-success true) (declare-const x Int) (assert (<= x 0)) (check-sat-assuming ((< 0 x))) (get-proof)",
       proofs = true
     )
     assertEquals(responses.take(4), List("success", "success", "success", "unsat"))
     val proof = responses.drop(4).mkString("\n")
-    assert(proof.startsWith("\""), proof.take(200))
-    assert(proof.contains("theorem no_model"), proof.take(2000))
+    assert(proof.startsWith("(vik-proof 1\n(script"), proof.take(200))
+    assertEquals(proof.count(_ == '('), proof.count(_ == ')'))
 
   test("a model quotes the symbols that are not simple"):
     val responses = serve("(declare-const |eq[A]| Int) (assert (= |eq[A]| 3)) (check-sat) (get-model)")
