@@ -1258,6 +1258,7 @@ private final class Encoder(
       bySymbol
     def applicationOf(symbol: String, root: EClassId): Option[EClassId] =
       unaryApplications.get(symbol).flatMap(_.get(root))
+    val unclassed = HashMap.empty[Term, Term] // the value of each datatype term the e-graph never saw
     def testerOf(root: EClassId, tester: String): Option[Boolean] =
       applicationOf(tester, root).map(c => eg.find(c) == eg.find(trueTerm))
     def selectorOf(root: EClassId, selector: String): Option[EClassId] = applicationOf(selector, root)
@@ -1370,6 +1371,18 @@ private final class Encoder(
             // inside its own value, through an array of the datatype: only there is it an element.
             case _ if Sorts.arrow(sort).isDefined && !arraysBeingValued(eg.find(cls)) => arrayValue(cls, sort)
             case _ => elementOf(sort, cls)
+    // A selector's application in no class, a term of a linear one (`s` in `(mk (+ (s a) x))`): the field of
+    // its argument's value, which the model check reads it as, and not 0.
+    def fieldOf(t: Term): Option[Term] = t match
+      case Term.App(Term.Const(selector), List(u)) =>
+        datatypes.iterator.flatMap(_.constructors).collectFirst {
+          case c if c.selectors.exists(_._1 == selector) => (c, c.selectors.indexWhere(_._1 == selector))
+        }.flatMap { (c, i) =>
+          valueOfTerm(u, sortOf(u)) match
+            case Term.App(Term.Const(name), args) if name == c.name => Some(args(i))
+            case _ => None
+        }
+      case _ => None
     def valueOfTerm(t: Term, sort: String): Term =
       (t, sort) match
         case (Term.Num(_), _) => t // a literal argument of an application
@@ -1383,10 +1396,12 @@ private final class Encoder(
         case (_, "Int") =>
           intVars.get(t).map(x => Term.Num(liaSolver.value(x)))
             .orElse(classes.get(t).map(c => Term.Num(freshInt(eg.find(c)))))
+            .orElse(fieldOf(t))
             .getOrElse(Term.Num(0))
         case (_, "Real") =>
           intVars.get(t).map(x => Model.rationalTerm(liaSolver.realValue(x)))
             .orElse(classes.get(t).map(c => Model.rationalTerm(freshReal(eg.find(c)))))
+            .orElse(fieldOf(t))
             .getOrElse(Term.Num(0))
         case _ =>
           classes.get(t) match
@@ -1395,7 +1410,9 @@ private final class Encoder(
               if sort == "Bool" then Term.boolean(Formula.False)
               else
                 datatypes.find(_.name == sort) match
-                  case Some(d) => builtValue(d, eg.newClass(), Set.empty) // never reached the e-graph: free
+                  // Never reached the e-graph: free, and one value however often it is asked for, since a field
+                  // of it may be read in a sum (see `fieldOf`).
+                  case Some(d) => unclassed.getOrElseUpdate(t, builtValue(d, eg.newClass(), Set.empty))
                   case None => elementOf(sort, eg.newClass())
     // A linear term values its class too, from the values of its terms: an argument `(+ a 1)` of a
     // constructor is a leaf of the e-graph without a variable of the simplex, and alone in its class

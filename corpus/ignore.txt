@@ -375,7 +375,6 @@ QF_UFBVDT/stainless/invalid-PackedFloat8__1.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/invalid-RedBlackTree2__28.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/invalid-RedBlackTree__33.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/valid-Peano__12.smt2	timeout (5 s limit)
-QF_UFBVDTLIA/stainless/valid-Heaps__4.smt2	model: a class holding a linear term gets a fresh value (#137)
 QF_UFBVLIA/stainless/valid-BitsTricksSlow__0.smt2	timeout (5 s limit)
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e03.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e07.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
@@ -410,10 +409,8 @@ QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_3_UFDTLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDTLIA/smtinterpol/interpolation__datatype__dt_project007.smt2	wrong: sat when a shared pair differs by a numeral (issue 136)
 QF_UFDTLIA/smtinterpol/proof__datatype__dt_project_int_2.smt2	wrong: sat for x = (cons (+ 1 (car x)) nil), a shared pair that differs by a numeral (issue 136)
-QF_UFDTLIA/stainless/valid-Acc__0.smt2	model: a class holding a linear term gets a fresh value (#137)
 QF_UFDTLIA/stainless/valid-BalancedParentheses__153.smt2	model: distinct free values of an infinite datatype get one value (#127)
 QF_UFDTLIA/stainless/valid-BalancedParentheses__69.smt2	model: distinct free values of an infinite datatype get one value (#127)
-QF_UFDTLIA/stainless/valid-NotEquals__0.smt2	model: a class holding a linear term gets a fresh value (#137)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f21.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f42.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f52.smt2	timeout (5 s limit)
