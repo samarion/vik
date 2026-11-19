@@ -572,6 +572,17 @@ private final class Encoder(
 
   private def isFun(t: Term): Boolean = Sorts.arrow(sortOf(t)).isDefined
 
+  /** Whether a term is the symbol of a store, a constant array or a map: a
+   *  function the array lemmas interpret, at every index read.
+   */
+  private def built(t: Term): Boolean = t match
+    case Term.App(f, _) => builder(f)
+    case _ => false
+
+  private def builder(f: Term): Boolean = f match
+    case Term.Const(n) => n.startsWith("store!") || n.startsWith("array.const!") || n.startsWith("array.map!")
+    case _ => false
+
   /** Theory combination: an `Int` term gets an e-class only when it occurs
    *  under an uninterpreted function or a constructor, or is compared by `Eq`;
    *  such shared terms are leaves for the e-graph and variables for the LIA
@@ -603,9 +614,27 @@ private final class Encoder(
     // others have nothing to. Two arrays under the same function meet here too, whatever the function
     // gives: equal by extensionality, their applications are equal by congruence (issue 39).
     def shares(a: Term.App): Boolean = isInt(a) || isFun(a) || a.args.exists(x => isInt(x) || isFun(x))
-    for (_, group) <- applications do
+    // Two arrays a store, a constant array or a map builds meet only when the search may equate them: the
+    // array lemmas say what each holds at every index read, and their arguments matter only once they are
+    // equal, where the arrays they write over must agree away from the writes. So two of them meet when
+    // equalities between arrays join them (asserted, shared or a lemma's). Paired whenever they had the
+    // same symbol, every two stores of a sort were an equality with a witness, read in turn by every array
+    // of the sort: a chain of n stores made n² witnesses and n³ reads, all of them paired again.
+    val joined = HashMap.empty[Term, Term]
+    def root(t: Term): Term =
+      val up = joined.getOrElse(t, t)
+      if up == t then t
+      else
+        val r = root(up)
+        joined(t) = r
+        r
+    for case Formula.Eq(f, g) <- functionEqualities.iterator ++ lemmaEqualities.iterator do
+      val (r, q) = (root(f), root(g))
+      if r != q then joined(r) = q
+    for (fun, group) <- applications do
       val relevant = group.filter(shares)
-      for (a, i) <- relevant.zipWithIndex; b <- relevant.drop(i + 1) do
+      val parts = if builder(fun) then relevant.groupBy(root).values else Iterable(relevant)
+      for part <- parts; (a, i) <- part.zipWithIndex; b <- part.drop(i + 1) do
         pair(a, b)
         for (x, y) <- a.args.zip(b.args) do pair(x, y)
     // Applications of different function terms meet too when the functions themselves can be equated —
@@ -628,11 +657,16 @@ private final class Encoder(
                 case _ => false)) =>
         a
     }.toList.groupBy(a => (sortOf(a.fun), a.args.length))
+    // Two reads of built arrays (stores, constant arrays, maps) meet only at the same index: each is read
+    // at every index of its sort, so the reads of two of them at two equal indices are equal through
+    // those at one of them. A read of another array meets all of them.
+    def meet(a: Term.App, b: Term.App): Unit = if a.fun != b.fun then
+      pair(a, b)
+      for (x, y) <- a.args.zip(b.args) do pair(x, y)
     for (_, group) <- byFunctionSort do
-      val relevant = group.filter(shares)
-      for (a, i) <- relevant.zipWithIndex; b <- relevant.drop(i + 1) if a.fun != b.fun do
-        pair(a, b)
-        for (x, y) <- a.args.zip(b.args) do pair(x, y)
+      val (reads, others) = group.filter(shares).partition(a => built(a.fun))
+      for (_, same) <- reads.groupBy(_.args); (a, i) <- same.zipWithIndex; b <- same.drop(i + 1) do meet(a, b)
+      for (a, i) <- others.zipWithIndex; b <- others.drop(i + 1) ++ reads do meet(a, b)
     // Not the equalities of the application lemmas: paired, they would be the problem's, each with a
     // witness, the map and the arrays read there, and the integers there shared in turn.
     for case eq @ Formula.Eq(a, b) <- lits.keys if !lemmaEqualities(eq) do pair(a, b)
