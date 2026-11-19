@@ -15,6 +15,14 @@ class ParserTest extends munit.FunSuite:
     )
     assert(Printer.print(defined).contains("(to_real a)"))
 
+  test("is-C is the tester of constructor C, unless the script declares it"):
+    val dt = "(declare-datatypes ((L 0)) (((Nil) (Cons (hd Int) (tl L))))) (declare-const l L)"
+    assertEquals(parse(s"$dt (assert (is-Cons l))").commands.last, parse(s"$dt (assert ((_ is Cons) l))").commands.last)
+    val own = parse(s"$dt (declare-fun is-Cons (L) Bool) (assert (is-Cons l))")
+    own.commands.last match
+      case Command.Assert(Formula.Pred(Term.App(Term.Const("is-Cons"), _))) => ()
+      case other => fail(s"read as the tester: $other")
+
   test("the reserved words and the Core symbols cannot be declared"):
     for name <- List("and", "=", "ite", "let", "forall", "true") do
       intercept[Smt2Error](parse(s"(declare-fun $name (Bool Bool) Bool)"))

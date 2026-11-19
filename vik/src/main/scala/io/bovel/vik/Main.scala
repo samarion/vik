@@ -13,14 +13,23 @@ private def parseFile(path: String) =
  *  `check-sat`, the models and values asked for. One file is the usual call;
  *  several make one process solve them all — what a training run for a JVM's
  *  AOT cache needs (bench/aot.sh).
+ *
+ *  With `-in`, the commands come from standard input instead, one response
+ *  printed and flushed as each command completes, as tools that drive a solver
+ *  process expect (see [[Interactive]]). `--proofs` makes `(get-proof)` answer
+ *  the certificate of the last `unsat` there.
  */
-@main def run(paths: String*): Unit =
+@main def run(args: String*): Unit =
   // The responses in UTF-8 whatever the locale: under `LC_ALL=C` HotSpot's standard output wrote the
   // non-ASCII characters of a symbol as `?`, itself a symbol character, so the model defined another
   // symbol than the script's (issue 60).
   val out = java.io.PrintStream(System.out, true, "UTF-8")
+  val (flags, paths) = args.partition(_.startsWith("-"))
   Console.withOut(out) {
-    for path <- paths do Session.run(parseFile(path)).foreach(println)
+    if flags.contains("-in") then
+      val in = java.io.BufferedReader(java.io.InputStreamReader(System.in, "UTF-8"))
+      Interactive(proofs = flags.contains("--proofs")).serve(in, out)
+    else for path <- paths do Session.run(parseFile(path)).foreach(println)
   }
   out.flush()
 
