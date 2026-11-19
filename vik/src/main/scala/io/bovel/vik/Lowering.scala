@@ -416,10 +416,10 @@ private final class Lowerer:
     case Sort.BitVec(w) => List(Command.Assert(range(Const(name), w)))
     case _ => Nil
 
-  /** A sort as the lowered script declares it: a bit-vector is an `Int`, in a
-   *  field, an argument, a result or an array as much as in a constant — the
-   *  solver ties a selector to its constructor's argument by the field's sort,
-   *  and every bit-vector term is an integer to it.
+  /** A sort as the lowered script declares it: a bit-vector is an `Int`, in an
+   *  argument, a result or an array as much as in a constant — every bit-vector
+   *  term is an integer to the solver. A datatype's field keeps its width
+   *  ([[field]]).
    */
   private def lowered(s: Sort): Sort = s match
     case Sort.BitVec(_) => Sort.Int
@@ -434,6 +434,19 @@ private final class Lowerer:
         case other => lowered(other)
       Sort.fun(List(i), lowered(element))
     case other => other
+
+  /** A datatype field's sort as the lowered script declares it: [[lowered]],
+   *  except that a bit-vector field keeps its sort, for its width. The solver
+   *  takes the field for an `Int` all the same, and bounds every application of
+   *  its selector by the width: the ones it makes itself too, which no range
+   *  here reaches — the field of a term of the datatype, which it needs to
+   *  split a datatype with finitely many values into those values. Lowered to
+   *  `Int`, `(mk (fld (_ BitVec 1)))` had infinitely many values to it, and
+   *  `r ≠ (mk #b0) ∧ r ≠ (mk #b1)` was `sat`.
+   */
+  private def field(s: Sort): Sort = s match
+    case Sort.BitVec(_) => s
+    case other => lowered(other)
 
   private def sortString(s: Sort): String = s match
     case Sort.BitVec(_) => "Int"
@@ -478,7 +491,7 @@ private final class Lowerer:
           undoable(functions, selector)
           functions(selector) = Sort.fun(List(d), s)
       List(Command.DeclareDatatypes(datatypes.map(d =>
-        d.copy(constructors = d.constructors.map(c => c.copy(selectors = c.selectors.map((n, s) => (n, lowered(s))))))
+        d.copy(constructors = d.constructors.map(c => c.copy(selectors = c.selectors.map((n, s) => (n, field(s))))))
       )))
     case s2.Command.DefineFun(name, params, sort, body) =>
       reserve(name)

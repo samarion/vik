@@ -9,7 +9,7 @@ import io.bovel.cdclt
 import io.bovel.cdclt.{Lit, Theory}
 import io.bovel.egraph.{App, EClassId, EGraph, NoRules}
 import io.bovel.lia
-import io.bovel.smtlib.{Datatype, Sorts}
+import io.bovel.smtlib.{Datatype, Sort, Sorts}
 
 /** An SMT solver for quantifier-free formulas over equality with uninterpreted
  *  functions and linear integer arithmetic: `assert` formulas, `push` and `pop`
@@ -69,6 +69,13 @@ final class Solver(val simplify: Boolean = true):
   private[vik] val declarations = HashMap.empty[String, (List[String], String)]
   private[vik] val datatypes = ArrayBuffer.empty[Datatype]
 
+  /** The width of each bit-vector field, by its selector. The lowering keeps a
+   *  field's bit-vector sort; the solver declares the field an `Int` and bounds
+   *  its selector's applications by the width (see
+   *  `Encoder.assertExhaustiveness`).
+   */
+  private[vik] val fieldWidths = HashMap.empty[String, Int]
+
   def declare(name: String, argSorts: List[String], sort: String): Unit =
     if encoder != null && encoder.nn.introducedName(name) then
       throw io.bovel.smtlib.Smt2Error(s"$name: a name the solver uses; pick another")
@@ -92,7 +99,9 @@ final class Solver(val simplify: Boolean = true):
     for c <- datatype.constructors do
       declarations -= c.name
       declarations -= c.tester
-      for (selector, _) <- c.selectors do declarations -= selector
+      for (selector, _) <- c.selectors do
+        declarations -= selector
+        fieldWidths -= selector
 
   /** Whether a `store` has been declared: a flag kept here, since the array
    *  passes ask at every round of the lemma loop and a scan of the
@@ -105,8 +114,18 @@ final class Solver(val simplify: Boolean = true):
   /** Declares a datatype: its constructors, selectors and testers become known
    *  function symbols.
    */
-  def declare(datatype: Datatype): Unit =
+  def declare(declared: Datatype): Unit =
     if encoder != null then dirty = true // its rules and exhaustiveness need an encoder that knows it
+    val datatype = declared.copy(constructors =
+      declared.constructors.map(c =>
+        c.copy(selectors = c.selectors.map {
+          case (selector, Sort.BitVec(w)) =>
+            fieldWidths(selector) = w
+            (selector, Sort.Int)
+          case other => other
+        })
+      )
+    )
     datatypes += datatype
     for c <- datatype.constructors do
       declarations(c.name) = (c.selectors.map(_._2.text), datatype.name)
@@ -262,7 +281,7 @@ final class Solver(val simplify: Boolean = true):
   private def decide(keepGoing: () => Boolean): Result =
     if encoder == null || dirty then
       if encoder != null then encoder.nn.addCounts(retired)
-      val e = Encoder(declarations, datatypes.toList, () => anyStore, () => asked())
+      val e = Encoder(declarations, datatypes.toList, fieldWidths.toMap, () => anyStore, () => asked())
       encoder = e
       encoded.clear()
       encoded ++= declarations
@@ -380,6 +399,7 @@ private object Encoder:
 private final class Encoder(
     declarations: HashMap[String, (List[String], String)],
     datatypes: List[Datatype],
+    fieldWidths: Map[String, Int], // the bit-vector fields' widths, by selector (see Solver.fieldWidths)
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
     keepGoing: () => Boolean // of the solve under way (see Solver.solve)
 ):
@@ -436,20 +456,28 @@ private final class Encoder(
 
   private val datatypeNames = datatypes.map(_.name).toSet
 
-  /** The datatypes with finitely many values: no constructor field of an
-   *  uninterpreted sort or of an infinite (e.g. recursive) datatype, computed
-   *  as a least fixpoint.
+  /** The datatypes with finitely many values: every constructor field a `Bool`,
+   *  a bit-vector or a finite datatype — none of an arithmetic or uninterpreted
+   *  sort or of an infinite (e.g. recursive) datatype; computed as a least
+   *  fixpoint.
    */
   private val finite: Set[String] =
     var known = Set("Bool")
     var changed = true
     while changed do
       val more = datatypes.filter(d =>
-        !known(d.name) && d.constructors.forall(_.selectors.forall((_, s) => known(s.text)))
+        !known(d.name) &&
+          d.constructors.forall(_.selectors.forall((s, sort) => known(sort.text) || fieldWidths.contains(s)))
       ).map(_.name)
       changed = more.nonEmpty
       known ++= more
     known
+
+  /** Whether a field has finitely many values: a bit-vector one (an `Int` to
+   *  the solver, with its width in [[fieldWidths]]), a `Bool` or a finite
+   *  datatype.
+   */
+  private def finiteField(selector: String, sort: String): Boolean = fieldWidths.contains(selector) || finite(sort)
 
   /** The terms known to be `Int`-sorted from their use in arithmetic (a summand
    *  of a combination, a side of `Le`), for undeclared constants.
@@ -683,11 +711,14 @@ private final class Encoder(
    *  testers holds; and, once [[boundFields]] says so, for its fields of a
    *  finite sort, those of every constructor of its sort, that their values are
    *  among their sort's: one of their testers, recursively, for a datatype,
-   *  true or false for a Boolean (see the class documentation). A tester that
-   *  holds expands the term into its constructor over these fields, whatever
-   *  the term's own sort, and nothing else bounds them: two terms built by one
-   *  constructor over a field of sort `Unit` stayed apart, against the one
-   *  value of `Unit` (issue 125).
+   *  true or false for a Boolean, an integer of its width's range for a
+   *  bit-vector (see the class documentation). A tester that holds expands the
+   *  term into its constructor over these fields, whatever the term's own sort,
+   *  and nothing else bounds them: two terms built by one constructor over a
+   *  field of sort `Unit` stayed apart, against the one value of `Unit` (issue
+   *  125). The lowering bounds a bit-vector field where the script applies its
+   *  selector, and nothing bounded the field the expansion invents: three
+   *  values of `(mk (f (_ BitVec 1)))` stayed apart (issue 126).
    */
   private val exhaustivenessSeen = scala.collection.mutable.HashSet.empty[Term]
   private val fieldsSeen = scala.collection.mutable.HashSet.empty[Term]
@@ -706,7 +737,9 @@ private final class Encoder(
    *  (`blocksworld__from_0_9_4_to_3_3_7_bmc_5`).
    */
   def boundFields(): Boolean =
-    val more = !fieldsBounded && datatypes.exists(_.constructors.exists(_.selectors.exists((_, s) => finite(s.text))))
+    val more =
+      !fieldsBounded &&
+        datatypes.exists(_.constructors.exists(_.selectors.exists((s, sort) => finiteField(s, sort.text))))
     fieldsBounded = true
     more
 
@@ -725,9 +758,19 @@ private final class Encoder(
               null
             )
           if fields then
-            for c <- datatype.constructors; (selector, sort) <- c.selectors if finite(sort.text) do
+            for c <- datatype.constructors; (selector, sort) <- c.selectors if finiteField(selector, sort.text) do
               val field = Term.App(Term.Const(selector), List(t))
-              if sort.text == "Bool" then boolean(field) else todo += field
+              fieldWidths.get(selector) match
+                case Some(width) =>
+                  classOf(field)
+                  assert(
+                    Formula.And(List(
+                      Formula.Le(Term.Num(0), field),
+                      Formula.Le(field, Term.Num(BigInt(2).pow(width) - 1))
+                    )),
+                    null
+                  )
+                case None => if sort.text == "Bool" then boolean(field) else todo += field
 
   private val liaSolver = lia.Solver()
   private val intVars = HashMap.empty[Term, lia.Var] // `Int`-sorted constants and applications
