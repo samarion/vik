@@ -1,0 +1,18 @@
+; From smtinterpol: array/const007.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.15.1 (statusstamp, 2026-11-18; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-option :print-terms-cse false)
+
+(set-logic QF_ALIA)
+(declare-sort U 0)
+(declare-fun v () U)
+(declare-fun w () U)
+(declare-fun i () Int)
+
+(assert (= (select ((as const (Array Int U)) v) i) w))
+(assert (not (= v w)))
+(set-info :status unsat)
+(check-sat)
+(get-proof)
+(exit)

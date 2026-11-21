@@ -36,6 +36,13 @@ QF_ABV/smt-lib/platania__no_init_extract_sublist__no_init_extract_sublist9.smt2	
 QF_ABV/smt-lib/platania__no_init_simple_member__no_init_simple_member17.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__selection_sort__selection_sort7.c.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__strcmp__strcmp37.c.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-at-the-keys-of-built-collections__15.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-at-the-keys-of-built-collections__16.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-at-the-keys-of-built-collections__17.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-of-nested-collections__0.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-of-nested-collections__1.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-of-nested-collections__2.smt2	timeout (5 s limit)
+QF_ALIA/inox/smtlib3-type-unrolling__reads-of-nested-collections__3.smt2	timeout (5 s limit)
 QF_ALIA/smt-lib-incremental/UltimateBuchiAutomizer__a.08-alloca_true-termination.c.i.prefix40.smt2	timeout (5 s limit)
 QF_ALIA/smt-lib-incremental/UltimateBuchiAutomizer__array02-alloca_true-termination.c.i.prefix40.smt2	timeout (5 s limit)
 QF_ALIA/smt-lib-incremental/UltimateBuchiAutomizer__cstrncpy-alloca_true-termination.c.i.prefix40.smt2	timeout (5 s limit)
@@ -53,6 +60,7 @@ QF_ALIA/smtinterpol/model__buggy001.smt2	timeout (5 s limit)
 QF_AUFBV/smt-lib-incremental/2018-Wolf-fmbench__VexRiscv-regch0-15-compact.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
 QF_AUFBV/smt-lib-incremental/2019-Wolf-fmbench__2019B__marlann_compute_fail1_QF_AUFBV.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
 QF_AUFBV/smt-lib/20210301-Alive2__sqlite3__906_sqlite3.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
+QF_AUFBVDTLIA/inox/tip-SAT__Lang.scala-0__0.smt2	timeout (5 s limit)
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__205_9a_array_unsafes_linux-3.16-rc1.tar.xz-205_9a-drivers--net--ppp--ppp_generic.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__205_9a_array_unsafes_linux-3.16-rc1.tar.xz-205_9a-drivers--net--wireless--mwifiex--mwifiex_sdio.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_1_cilled_ok_nondet_linux-3.4-32_1-drivers--input--misc--atlas_btns.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
@@ -64,19 +72,29 @@ QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-3
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.0-rc1---drivers--block--paride--pf.ko.cil_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.2-rc1.tar.xz-43_2a-drivers--crypto--qat--qat_common--intel_qat.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.2-rc1.tar.xz-43_2a-drivers--infiniband--ulp--isert--ib_isert.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
+QF_AUFDTLIA/inox/smtlib3-bags__split-preserves-content__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/smtlib3-bags__split2-doesnt-preserve-content__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/smtlib3-inductive-unrolling__sort-preserves-content-2__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/smtlib3-type-unrolling__reads-of-collections-with-dependent-elements__4.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/tip-SAT__BinarySearchTreeQuant.scala-2__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/tip-SAT__Sorted.scala-0__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/tip-UNSAT__BinarySearchTreeQuant2.scala-0__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/tip-UNSAT__MergeSort2.scala-0__0.smt2	timeout (5 s limit)
+QF_AUFDTLIA/inox/tip-UNSAT__MergeSort2.scala-1__0.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress0-auflia__fuzz02.smtv1.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress0-auflia__fuzz05.smtv1.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress1-auflia__bug330.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress3__auflia-fuzz06.smtv1.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress4__bug337.smt2	timeout (5 s limit)
 QF_AUFLIA/cvc5/regress4__swap_t1_pp_nf_ai_00010_004.cvc.smt2	timeout (5 s limit)
+QF_AUFLIA/inox/smtlib3-type-unrolling__reads-of-contract-results__1.smt2	timeout (5 s limit)
 QF_AUFLIA/smt-lib/array_benchmarks__pipeline-invalid.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_AUFLIA/smt-lib/cvc__read8.smt2	skip: the sharing atoms exhaust the heap at the encoding
 QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_002.cvc.smt2	timeout (5 s limit)
 QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_003.cvc.smt2	timeout (5 s limit)
 QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_005.cvc.smt2	timeout (5 s limit)
+QF_AUFLIA/smtinterpol/interpolation__constarr014.smt2	timeout (5 s limit)
 QF_AUFLIA/smtinterpol/regression__Script_simple_true-unreach-call_false-valid-memtrack.i_Iterationsimple_true-unreach-call_false-valid-memtrack.i_2.smt2	timeout (5 s limit)
-QF_AX/smt-lib/storeinv__storeinv_invalid_t3_np_nf_ai_00002_001.cvc.smt2	model: a class holding two stores takes its value from either (#189)
 QF_BV/cvc5/regress0-bv__bitvec0.delta01.smtv1.smt2	timeout (5 s limit)
 QF_BV/cvc5/regress0-bv__bitvec0.smtv1.smt2	timeout (5 s limit)
 QF_BV/cvc5/regress0-bv__bitvec1.smtv1.smt2	timeout (5 s limit)

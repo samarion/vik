@@ -23,7 +23,8 @@ final class UfTheory(
     atoms: ArrayBuffer[(EClassId, EClassId) | Null],
     trueClass: EClassId,
     falseClass: EClassId,
-    twoValued: EClassId => Boolean
+    twoValued: EClassId => Boolean,
+    mergeFirst: Var => Boolean = _ => false // the equality atoms a decision makes true first
 ) extends Theory:
   /** Atoms asserted so far, with the level marks for `pop`; `atoms` may grow
    *  between solves, so these grow with it.
@@ -175,6 +176,8 @@ final class UfTheory(
         case Some(reasons) => Theory.Result.Conflict(lits(reasons))
         case None => Theory.ok
     case other => other
+
+  override def firmPhase(v: Var): Option[Boolean] = if mergeFirst(v) then Some(true) else None
 
   def explain(lit: Lit): ArrayBuffer[Lit] =
     val (t, u) = atoms(lit.variable).nn

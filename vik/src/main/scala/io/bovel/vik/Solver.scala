@@ -102,7 +102,7 @@ final class Solver(val simplify: Boolean = true):
         val e = encoder
         if e != null && !dirty then e.assert(range, null)
       case _ => ()
-    if Names.isStore(name) then anyStore = true
+    if Names.isArrayOperation(name) then anyStore = true
 
   /** What the sort of a declared constant says of it: a constant of a range of
    *  the integers ([[Sort.IntRange]], what a bit-vector sort is to the solver)
@@ -120,6 +120,41 @@ final class Solver(val simplify: Boolean = true):
    */
   private final case class Fact(formula: Formula, level: Int, index: Int)
   private val facts = scala.collection.mutable.LinkedHashMap.empty[String, Fact]
+
+  /** What each declared map of arrays holds at an index (see [[Pointwise]]). */
+  private[vik] val maps = HashMap.empty[String, Pointwise]
+
+  /** The finite index sorts of the constant arrays and maps other than `Bool`
+   *  and the ranges of the integers: how many values each has, and how to build
+   *  the `k`-th (see [[Command.DeclareFinite]]).
+   */
+  private[vik] val finiteSorts = HashMap.empty[Sort, (BigInt, BigInt => Term)]
+
+  /** Their counts, by their text, which the model's arrays carry. */
+  private[vik] val finiteSizes = HashMap.empty[String, BigInt]
+
+  /** The constants a map's template mentions, other than its own parameters and
+   *  auxiliaries.
+   */
+  private def templateConstants(pointwise: Pointwise): Set[String] =
+    (pointwise.value :: pointwise.definitions.flatMap(_.terms)).flatMap(Term.constants).toSet --
+      pointwise.params.collect { case Term.Const(n) => n } -- pointwise.auxiliaries.map(_._1)
+
+  def declareFinite(sort: Sort, size: BigInt, value: BigInt => Term): Unit =
+    if finiteSorts.contains(sort) then dirty = true // a sort of its name declared anew, after a pop
+    finiteSorts(sort) = (size, value)
+    finiteSizes(sort.text) = size
+
+  /** Declares a map of arrays: the symbol, and the auxiliaries of what it holds
+   *  at an index, each a function of the elements there.
+   */
+  def declare(name: String, sort: Sort, pointwise: Pointwise): Unit =
+    // A template that mentions a constant the simplification eliminated is a mention of it, like an
+    // assertion's (see mentionsEliminated): the template is not substituted into.
+    if encoder != null && !dirty && templateConstants(pointwise).exists(eliminated.contains) then dirty = true
+    maps(name) = pointwise
+    for (auxiliary, argSorts, result) <- pointwise.auxiliaries do declare(auxiliary, argSorts, result)
+    declare(name, Nil, sort)
 
   /** The declarations the live encoder was given, as given: what a declaration
    *  after a pop is held against.
@@ -371,7 +406,16 @@ final class Solver(val simplify: Boolean = true):
   private def decide(keepGoing: () => Boolean): Result =
     if encoder == null || dirty then
       if encoder != null then encoder.nn.addCounts(retired)
-      val e = Encoder(declarations, datatypes.toList, auxiliaries, () => anyStore, () => asked())
+      val e = Encoder(
+        declarations,
+        datatypes.toList,
+        auxiliaries,
+        maps,
+        finiteSorts,
+        finiteSizes,
+        () => anyStore,
+        () => asked()
+      )
       encoder = e
       encoded.clear()
       encoded ++= declarations
@@ -394,7 +438,9 @@ final class Solver(val simplify: Boolean = true):
       if simplified then
         // One level: the batch is the whole set, so the global simplification is sound to keep.
         val (assertions, gone) =
-          Simplifier.simplifyEach(levels.head.toList, constructors, named.head.map(_._2).toList, e.step)
+          // The constants the maps' templates mention are never eliminated: the templates are left as they are.
+          val kept = constructors ++ maps.values.flatMap(templateConstants)
+          Simplifier.simplifyEach(levels.head.toList, kept, named.head.map(_._2).toList, e.step)
         eliminated = gone
         encode(0, assertions, null)
       else
@@ -442,6 +488,8 @@ final class Solver(val simplify: Boolean = true):
     e.solve(assumed, keepGoing) match
       // A `sat` found before the datatype terms had their fields of a finite sort: searched again with them.
       case cdclt.Solver.Result.Sat(_) if e.boundFields() => decide(keepGoing)
+      // A `sat` that kept two shared arrays apart before they had a witness: searched again with it.
+      case cdclt.Solver.Result.Sat(_) if e.witnessApart() => decide(keepGoing)
       case cdclt.Solver.Result.Sat(_) =>
         lastCore = Nil
         if !checkModels then Result.Sat
@@ -529,6 +577,9 @@ private final class Encoder(
     declarations: HashMap[String, (List[Sort], Sort)],
     datatypes: List[Datatype],
     auxiliaries: HashSet[String], // the solver's set, read when a constant gets its LIA variable
+    maps: HashMap[String, Pointwise], // what each map of arrays holds at an index
+    finiteSorts: HashMap[Sort, (BigInt, BigInt => Term)], // the finite index sorts, their counts, their values
+    finiteSizes: HashMap[String, BigInt], // their counts, by their text (see Solver.finiteSizes)
     anyStore: () => Boolean, // the solver's flag, read at every array pass (see Solver.anyStore)
     keepGoing: () => Boolean // of the solve under way (see Solver.solve)
 ):
@@ -549,10 +600,14 @@ private final class Encoder(
   private val terms = ArrayBuffer.empty[Term] // the terms of `classes`, in the order they arrived: for the passes
   private val unranged = ArrayBuffer.empty[Term] // the terms of an integer range, as they arrive (see assertSorts)
   private val equalities = ArrayBuffer.empty[Formula] // the equality atoms, as they are encoded (see shareIntegers)
-  private var anyArrayApplication = false // an application of a store
-  // The applications among `terms` by their function, and the stores among them, both in arrival order.
+  private var anyArrayApplication = false // an application of a store, a constant array or a map
+  // The applications among `terms` by their function, and the stores, constant arrays and maps among them,
+  // all in arrival order.
   private val applications = HashMap.empty[Term, ArrayBuffer[Term.App]]
   private val storeTerms = ArrayBuffer.empty[Term.App]
+  private val constTerms = ArrayBuffer.empty[Term.App]
+  private val mapTerms = ArrayBuffer.empty[Term.App]
+  private val arrayOperations = ArrayBuffer.empty[Term.App] // the three, as they arrived
   private val noApplications = ArrayBuffer.empty[Term.App]
   private val sorts = HashMap.empty[Term, Sort] // the sorts of terms, memoized: asked for every term, many times
   private val adt = if datatypes.isEmpty then None else Some(AdtRules())
@@ -809,7 +864,7 @@ private final class Encoder(
             if sortOf(a.fun).arrow.isDefined
               && (equatableFuns(a.fun) ||
                 (a.fun match
-                  case Term.App(Term.Const(n), _) => Names.isStore(n)
+                  case Term.App(Term.Const(n), _) => Names.isArrayOperation(n)
                   case _ => false)) =>
           a
       }.toList.groupBy(a => (sortOf(a.fun), a.args.length))
@@ -853,12 +908,17 @@ private final class Encoder(
         case difference => equalOrApart(intVar(difference), 0)
     // An equality atom per pair of function-sorted shared terms — two arrays under the same function can
     // meet, and the atom's extensionality witness (with the store lemmas at it) decides whether they do:
-    // the entailed disjunction of the classic Stump-Barrett-Dill-Levitt example.
+    // the entailed disjunction of the classic Stump-Barrett-Dill-Levitt example. The witness waits until a
+    // `sat` keeps the two apart (see awaitingWitness).
     // An equality an application lemma made already stays the lemma's, without a witness: only the
     // problem stating it makes it one of its own (see `lit`).
     for (a, b) <- arrayPairs do
       val eq = Formula.Eq(a, b)
-      lits.getOrElseUpdate(eq, encode(eq))
+      if !lits.contains(eq) then
+        lits(eq) = encode(eq)
+        if functionEqualities.nonEmpty && functionEqualities.last == eq then
+          awaitingWitness += eq
+          awaitingVars += lits(eq).variable
 
   /** Applications of the arrays the search may equate with a store: for every
    *  application `a(i)` of an array-sorted term and every store term `s` of the
@@ -879,7 +939,7 @@ private final class Encoder(
     var more = true
     while more do
       more = false
-      val stores = storeTerms.toList
+      val stores = arrayOperations.toList
       val apps = if stores.isEmpty then Nil else terms.iterator.collect { case a: Term.App => a }.toList
       for s <- stores; a <- apps do
         step()
@@ -903,7 +963,17 @@ private final class Encoder(
    *  inner array of it — at one index.
    */
   private def applicable(a: Term.App, s: Term): Boolean =
-    a != s && a.fun != s && a.args.length == 1 && sortOf(a.fun) == sortOf(s)
+    a != s && a.fun != s && a.args.length == 1 && !declaredFunction(a.fun) && sortOf(a.fun) == sortOf(s)
+
+  /** Whether a term is a declared function symbol: of an array's sort when it
+   *  takes one argument, and no array — nothing equates it with one, and its
+   *  argument is no index. An auxiliary of a map's operator is one, applied to
+   *  the elements of the arrays: taken for an array, the element would be an
+   *  index, the map read there, and its element there another, without end.
+   */
+  private def declaredFunction(f: Term): Boolean = f match
+    case Term.Const(name) => declarations.get(name).exists(_._1.nonEmpty)
+    case _ => false
 
   /** Extensionality: for every equality atom between function-sorted terms, the
    *  lemma `f = g ∨ f(c) ≠ g(c)` with fresh constants `c` (the witnesses of the
@@ -918,6 +988,51 @@ private final class Encoder(
    */
   private val functionEqualities = ArrayBuffer.empty[Formula]
   private var recordFunctionEqualities = true
+
+  /** The function equalities [[shareIntegers]] made between two arrays that can
+   *  meet, whose witness waits until a search keeps the two apart: the e-graph
+   *  merges the arrays the search equates, and a pair it equates needs none.
+   *  Given one up front, each pair's witness was an index every array of its
+   *  sort was read at, a map among them, whose elements there made new pairs,
+   *  and new witnesses, without end. Once the search answers `sat` with two of
+   *  them apart, they get their witness, and the search goes on (see
+   *  [[witnessApart]]).
+   */
+  private val awaitingWitness = scala.collection.mutable.LinkedHashSet.empty[Formula]
+  private val keptApart = ArrayBuffer.empty[Formula] // the ones the last `sat` kept apart
+  private val awaitingVars = HashSet.empty[cdclt.Var] // the variables of their atoms
+
+  /** Whether the last `sat` kept shared arrays apart that had no witness: they
+   *  have one now, for the passes and the search to go on with.
+   */
+  def witnessApart(): Boolean =
+    val made = keptApart.nonEmpty
+    for eq <- keptApart do
+      awaitingWitness -= eq
+      awaitingVars -= lits(eq).variable
+    keptApart.clear()
+    made
+
+  /** The shared arrays the model of a `sat` keeps apart with no witness of a
+   *  difference: one pair per two classes of the e-graph, whose other members
+   *  differ where those two do, by congruence. Two classes already told apart
+   *  by a witness need no other.
+   */
+  private def wantWitnesses(model: Array[Boolean]): Unit =
+    def apart(eq: Formula): Boolean =
+      val l = lits(eq)
+      model(l.variable) != l.positive
+    def classesOf(eq: Formula): (EClassId, EClassId) = eq match
+      case Formula.Eq(a, b) =>
+        val (x, y) = (eg.find(classOf(a)), eg.find(classOf(b)))
+        if x <= y then (x, y) else (y, x)
+      case _ => throw IllegalStateException(s"not an equality: $eq")
+    val toldApart = scala.collection.mutable.HashSet.empty[(EClassId, EClassId)]
+    for eq <- functionEqualities do
+      if extensionalityDone(eq) && !awaitingWitness(eq) && lits.contains(eq) && apart(eq) then
+        toldApart += classesOf(eq)
+    for eq <- awaitingWitness do
+      if apart(eq) && toldApart.add(classesOf(eq)) then keptApart += eq
 
   def functionEqualityCount: Int = functionEqualities.length
 
@@ -936,7 +1051,7 @@ private final class Encoder(
     var more = true
     while more do
       more = false
-      for case eq @ Formula.Eq(f, g) <- functionEqualities.toList if !done(eq) do
+      for case eq @ Formula.Eq(f, g) <- functionEqualities.toList if !done(eq) && !awaitingWitness(eq) do
         done += eq
         if !assertedEqualities(eq) then
           sortOf(f).arrow.orElse(sortOf(g).arrow) match
@@ -1132,14 +1247,22 @@ private final class Encoder(
             case _ => unranged += term
         case _ => ()
       term match
-        case Term.App(Term.App(Term.Const(n), _), _) if Names.isStore(n) => anyArrayApplication = true
+        case Term.App(Term.App(Term.Const(n), _), _) if Names.isArrayOperation(n) => anyArrayApplication = true
         case _ => ()
       terms += term
       term match
         case a: Term.App =>
           applications.getOrElseUpdate(a.fun, ArrayBuffer.empty) += a
           a match
-            case Term.App(Term.Const(name), List(_, _, _)) if Names.isStore(name) => storeTerms += a
+            case Term.App(Term.Const(name), List(_, _, _)) if Names.isStore(name) =>
+              storeTerms += a
+              arrayOperations += a
+            case Term.App(Term.Const(name), List(_)) if Names.isConstArray(name) =>
+              constTerms += a
+              arrayOperations += a
+            case Term.App(Term.Const(name), _) if Names.isMap(name) =>
+              mapTerms += a
+              arrayOperations += a
             case _ => ()
         case _ => ()
       classOfNew(term)
@@ -1195,8 +1318,77 @@ private final class Encoder(
     case Term.App(Term.Const(n), _) if Names.isStore(n) => Term.App(array, List(index))
     case _ => Term.App(array, List(index))
 
+  /** An index of `sort` no store writes at, for the sorts indexing a constant
+   *  array: reading there carries the value of a constant array through the
+   *  stores over it, so that `((as const A) 0)` with finitely many writes is
+   *  not `((as const A) 1)`. There is one while the sort has more values than
+   *  the stores' indices; a finite sort they may fill is listed instead (see
+   *  [[settling]]): a bit-vector's values the solver knows, another's the
+   *  lowering counts and lists ([[Command.DeclareFinite]]).
+   */
+  private val beyondIndices = scala.collection.mutable.HashMap.empty[Sort, Term]
+  private val beyondDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
+
+  /** How many store indices the index beyond the writes of each sort is apart
+   *  from, and the bit-vector sorts whose stores were too many for it, now read
+   *  at their every value.
+   */
+  private val beyondApart = scala.collection.mutable.HashMap.empty[Sort, Int]
+  private val listedSorts = scala.collection.mutable.HashSet.empty[Sort]
+
+  private def beyond(sort: Sort): Term = beyondIndices.getOrElseUpdate(
+    sort, {
+      val name = Names.beyond(beyondIndices.size)
+      sort match
+        case Sort.IntRange(_, _) => () // its range comes with its class (see assertSorts)
+        case _ if cardinality(sort) != Encoder.Cardinality.Infinite && !finiteSorts.contains(sort) =>
+          throw io.bovel.smtlib.Smt2Error(s"a constant array or a map over the finite sort $sort")
+        case _ => ()
+      introduced(name) = sort
+      Term.Const(name)
+    }
+  )
+
+  /** The indices that settle a constant array or a map of index sort `sort`
+   *  away from the indices read: the index beyond the writes, and every value
+   *  of the sort as well once the stores' indices may fill it (see
+   *  [[arrayLemmas]]: four writes fill a `(_ BitVec 2)`, and no index is left
+   *  beyond them). `Bool`'s two values are listed from the start.
+   */
+  private def settling(sort: Sort): List[Term] = sort match
+    case Sort.Bool => List(Term.boolean(Formula.True), Term.boolean(Formula.False))
+    case Sort.IntRange(lower, upper) if listedSorts(sort) => beyond(sort) :: (lower to upper).toList.map(Term.Num(_))
+    case _ if listedSorts(sort) => beyond(sort) :: listing(sort)
+    case _ => List(beyond(sort))
+
+  /** The values of a finite index sort the lowering counted, built once it is
+   *  listed: as many as the writes that filled it, and one more.
+   */
+  private val listings = scala.collection.mutable.HashMap.empty[Sort, List[Term]]
+
+  private def listing(sort: Sort): List[Term] = listings.getOrElseUpdate(
+    sort, {
+      val (size, value) = finiteSorts(sort)
+      List.tabulate(size.toInt)(k => value(BigInt(k)))
+    }
+  )
+
   private val arrayWritesDone = scala.collection.mutable.HashSet.empty[Term]
+  private val exhausted = scala.collection.mutable.HashSet.empty[(Sort, Term)]
   private val arrayReadsDone = scala.collection.mutable.HashSet.empty[(Term, Term)]
+
+  /** The literal of the equality of two elements in an array lemma: what a
+   *  store, a constant array or a map holds at an index, an array itself for
+   *  arrays of arrays. Its equality between arrays gets no witness, as an
+   *  application lemma's (see [[lemmaEqualities]]): the lemma only ever needs
+   *  it to hold, and a witness would be an index every array of its sort is
+   *  read at, whose elements there are equalities of the lemmas in turn,
+   *  without end. One the problem states gets its witness (see `lit`).
+   */
+  private def lemma(formula: Formula): Lit =
+    recordFunctionEqualities = false
+    try lit(formula)
+    finally recordFunctionEqualities = true
 
   def arrayLemmas(): Unit = if anyStore() then
     val stores = storeTerms.toList
@@ -1205,6 +1397,7 @@ private final class Encoder(
       indices.getOrElseUpdate(sort, scala.collection.mutable.LinkedHashSet.empty) += j
     for a <- terms do
       a match
+        case Term.App(f, List(_)) if declaredFunction(f) => ()
         case Term.App(f, List(j)) if sortOf(f).arrow.isDefined => index(sortOf(f), j)
         case _ => ()
     for s <- stores do index(sortOf(s), s.args(1))
@@ -1214,17 +1407,70 @@ private final class Encoder(
       if Encoder.numeric(sort) then Formula.IntEq(l, r) else Formula.Eq(l, r)
     def equalIndex(sort: Sort, l: Term, r: Term): Formula =
       if sort.isInstanceOf[Sort.IntRange] then Formula.Eq(l, r) else equalAt(sort, l, r)
+    // The index beyond the writes (see [[beyond]]) is none of the written ones, while a value is left
+    // for it: a bit-vector sort of `2^n` values takes `2^n - 1` indices apart from it, and its arrays
+    // are read at every value from then on (see [[settling]]). Fewer indices than values is all it
+    // needs, whatever the indices are: two of them may be equal, and the sort then has even more room.
+    for s <- stores do
+      val indexSort = sortOf(s).arrow.get._1.head
+      for w <- beyondIndices.get(indexSort) do
+        if beyondDone.add((w, s.args(1))) then
+          val room = indexSort match
+            case Sort.IntRange(lower, upper) => upper - lower
+            case _ => finiteSorts.get(indexSort).fold(BigInt(-1))(_._1 - 1) // -1: an infinite sort
+          val apart = beyondApart.getOrElse(indexSort, 0)
+          if room >= 0 && apart >= room then listedSorts += indexSort
+          else
+            beyondApart(indexSort) = apart + 1
+            clauses += Array(lit(equalIndex(indexSort, w, s.args(1))).neg)
+    // A constant array holds its value at every index of its sort: `const(d)(j) = d`.
+    for case c @ Term.App(_, List(d)) <- constTerms.toList do
+      val sort = sortOf(c)
+      val elementSort = applied(sort, 1)
+      settling(sort.arrow.get._1.head).foreach(index(sort, _))
+      for j <- indices.getOrElse(sort, Nil).toList do
+        step()
+        if arrayReadsDone.add((c, j)) then clauses += Array(lemma(equalAt(elementSort, selectTerm(c, j), d)))
+    // A map holds, at every index of its sort and of its arrays', what its operator makes of what
+    // the arrays hold there: its template at their elements, each auxiliary of the template a
+    // function of them, defined there (see [[Pointwise]]). The index beyond the writes is one of
+    // them: it settles the map away from the indices read, as for a constant array.
+    for case m @ Term.App(Term.Const(name), arrays) <- mapTerms.toList do
+      val pointwise = maps.getOrElse(name, throw io.bovel.smtlib.Smt2Error(s"$name: a map with no operator"))
+      val sort = sortOf(m)
+      val elementSort = applied(sort, 1)
+      settling(sort.arrow.get._1.head).foreach(index(sort, _))
+      for j <- (sort :: arrays.map(sortOf)).distinct.flatMap(indices.getOrElse(_, Nil)).distinct do
+        step()
+        if arrayReadsDone.add((m, j)) then
+          val (definitions, value) = pointwise.at(arrays.map(selectTerm(_, j)), (c, elements) => Term.App(c, elements))
+          for d <- definitions do clauses += Array(lit(d))
+          clauses += Array(
+            lemma(
+              if elementSort == Sort.Bool then Formula.Iff(Formula.Pred(selectTerm(m, j)), Formula.pred(value))
+              else equalAt(elementSort, selectTerm(m, j), value)
+            )
+          )
+    // An index read of a listed sort other than the ranges of the integers is one of its values, as the
+    // arithmetic says of a range's: the reads at them all then settle what an array holds there.
+    for (sort, js) <- indices.toList do
+      val indexSort = sort.arrow.get._1.head
+      if listedSorts(indexSort) then
+        val listed = if finiteSorts.contains(indexSort) then listing(indexSort) else Nil
+        for j <- js.toList if listed.nonEmpty do
+          if !listed.contains(j) && exhausted.add((indexSort, j)) then
+            clauses += listed.map(v => lit(equalIndex(indexSort, j, v))).toArray
     for case s @ Term.App(_, List(a, i, v)) <- stores do
       val sort = sortOf(s)
       val indexSort = sort.arrow.get._1.head
       val elementSort = applied(sort, 1) // an array, for an array of arrays
-      if arrayWritesDone.add(s) then clauses += Array(lit(equalAt(elementSort, selectTerm(s, i), v)))
+      if arrayWritesDone.add(s) then clauses += Array(lemma(equalAt(elementSort, selectTerm(s, i), v)))
       for j <- indices.getOrElse(sort, Nil) do
         step()
         if j != i && arrayReadsDone.add((s, j)) then
           clauses += Array(
             lit(equalIndex(indexSort, i, j)),
-            lit(equalAt(elementSort, selectTerm(s, j), selectTerm(a, j)))
+            lemma(equalAt(elementSort, selectTerm(s, j), selectTerm(a, j)))
           )
 
   def booleanCount: Int = booleans.length
@@ -1295,6 +1541,9 @@ private final class Encoder(
     if recordFunctionEqualities && lemmaEqualities.nonEmpty && lemmaEqualities.remove(formula) then
       functionEqualities += formula
       equalities += formula
+    // One the sharing made, met in a formula of the problem: its witness waits no more.
+    if recordFunctionEqualities && awaitingWitness.nonEmpty && awaitingWitness.remove(formula) then
+      awaitingVars -= lits(formula).variable
     lits.getOrElseUpdate(formula, encode(formula))
 
   /** The function equalities encoded for the application lemmas alone, which
@@ -1467,7 +1716,9 @@ private final class Encoder(
    */
   private var anySharedAtom = false
 
-  private val ufTheory = UfTheory(eg, atoms, trueTerm, falseTerm, booleanClasses)
+  // A decision on the equality of two shared arrays merges them first: the search keeps them apart only
+  // where it must, and only those get a witness (see awaitingWitness).
+  private val ufTheory = UfTheory(eg, atoms, trueTerm, falseTerm, booleanClasses, v => awaitingVars(v))
   private val theories = List(ufTheory, LiaTheory(liaSolver, liaAtoms, guidedAtoms, bound(_, _, strict = false)))
 
   /** Adds the work of the encoding and of the engines to `counts`, in the order
@@ -1510,16 +1761,18 @@ private final class Encoder(
     while deferredCursor < deferred.length do
       sat.defer(deferred(deferredCursor))
       deferredCursor += 1
+    awaitingVars.foreach(sat.prefer) // decided equal before the integers that would tell them apart
     while clauseCursor < clauses.length do
       sat.addClause(clauses(clauseCursor))
       clauseCursor += 1
     lastModel = null
     val result = sat.solve(assumptions.toArray, keepGoing)
     result match
-      case cdclt.Solver.Result.Sat(_) =>
+      case cdclt.Solver.Result.Sat(model) =>
         wantFields()
-        // Not the model of a `sat` that is searched again (see boundFields).
-        if produceModels && !fieldsWanted then lastModel = takeModel()
+        if !fieldsWanted then wantWitnesses(model)
+        // Not the model of a `sat` that is searched again (see boundFields and witnessApart).
+        if produceModels && !fieldsWanted && keptApart.isEmpty then lastModel = takeModel()
       case _ => ()
     sat.unwind() // the next assert must find the engines at level 0, not on the trail of this search
     result
@@ -1773,7 +2026,16 @@ private final class Encoder(
               Model.store(arrayValue(classOf(base), sort), valueOfTerm(i, indexSort), valueOfTerm(v, elementSort))
           }
           arraysBeingValued -= root
-          val start = written.getOrElse {
+          // A class with a constant array in it holds that array's value everywhere.
+          val constant = constTerms.collectFirst {
+            case c @ Term.App(_, List(d)) if eg.find(classes(c)) == root =>
+              Model.constArray(sort, valueOfTerm(d, elementSort))
+          }
+          // A class read at the index beyond the writes holds, away from its rows, what it holds there.
+          val settled = beyondIndices.get(indexSort).flatMap(w =>
+            if classes.contains(w) then rows.get(valueOfTerm(w, indexSort)) else None
+          ).map(Model.constArray(sort, _))
+          val start = written.orElse(constant).orElse(settled).getOrElse {
             Model.constArray(sort, valueOfTerm(Term.Const("@default"), elementSort))
           }
           rows.toList.sortBy(_._1.toString).foldLeft(start) { case (acc, (i, v)) => Model.store(acc, i, v) }
@@ -1813,7 +2075,7 @@ private final class Encoder(
     val functions = Map.newBuilder[String, Model.Function]
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.isEmpty && sort.arrow.isDefined && !Names.isStore(name)
+      if argSorts.isEmpty && sort.arrow.isDefined && !Names.isArrayOperation(name)
     do
       // An array the assertions never read or wrote holds a default everywhere: a value all the same,
       // where `(select arr i)` was printed as itself (issue 48).
@@ -1824,7 +2086,7 @@ private final class Encoder(
     // A function into arrays: its graph, an array value per application the problem mentions (issue 27).
     for
       (name, (argSorts, sort)) <- declarations
-      if argSorts.nonEmpty && sort.arrow.isDefined && !Names.isStore(name)
+      if argSorts.nonEmpty && sort.arrow.isDefined && !Names.isArrayOperation(name)
     do
       val rows = classes.keys.collect {
         case a @ Term.App(Term.Const(n), args) if n == name && args.length == argSorts.length =>
@@ -1841,7 +2103,10 @@ private final class Encoder(
         }.toList
         val default = rows.headOption.map(_._2).getOrElse(valueOfTerm(Term.Const("@default"), sort))
         functions += name -> Model.Function(argSorts, sort, rows, default)
-    Model(constants.result(), functions.result(), datatypes)
+    val constSorts = declarations.collect {
+      case (name, (Nil, sort)) if Names.isConstArray(name) => name -> applied(sort, 1)
+    }.toMap
+    Model(constants.result(), functions.result(), datatypes, maps.toMap, finiteSizes.toMap, constSorts)
 
 /** Several theories over disjoint sets of atoms, asserted and checked in turn,
  *  without exchange of equalities between them; `owner(v)` is the theory of the
@@ -1864,6 +2129,7 @@ private final class Theories(
   override def finalCheck(): Theory.Result = combine(_.finalCheck())
   def explain(lit: Lit): ArrayBuffer[Lit] = implier.getOrElse(lit.variable, owner(lit.variable)).explain(lit)
   override def phase(v: cdclt.Var): Option[Boolean] = owner(v).phase(v)
+  override def firmPhase(v: cdclt.Var): Option[Boolean] = owner(v).firmPhase(v)
   def push(): Unit = theories.foreach(_.push())
   def pop(): Unit = theories.foreach(_.pop())
 

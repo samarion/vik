@@ -222,6 +222,8 @@ final class Session(
 
   private def declare(command: Command): Unit = command match
     case Command.DeclareFun(name, argSorts, sort, auxiliary) => current.declare(name, argSorts, sort, auxiliary)
+    case Command.DeclareMap(name, sort, pointwise) => current.declare(name, sort, pointwise)
+    case Command.DeclareFinite(sort, size, value) => current.declareFinite(sort, size, value)
     case Command.DeclareDatatypes(datatypes) => datatypes.foreach(current.declare)
     case _ => ()
 
@@ -290,10 +292,21 @@ final class Session(
     then current.produceModels = true
     for command <- commands do
       command match
+        case Command.DeclareFun(name, _, _, _) if Names.isArrayOperation(name) =>
+          // A `.store!N` or `.array.const!N`, kept past the pop of its level: the lowering keeps the
+          // symbol for its array sort, and a later level that uses it needs the solver to know it.
+          lastCheck = ""
+          declarations += command
+          declare(command)
         case Command.DeclareFun(_, _, _, _) | Command.DeclareDatatypes(_) =>
           lastCheck = ""
           declarations += command
           if declaredAt.length > 1 && !globalDeclarations then declaredAt.last += command
+          declare(command)
+        case Command.DeclareMap(_, _, _) | Command.DeclareFinite(_, _, _) =>
+          // kept past the pop of its level: the lowering keeps the symbol
+          lastCheck = ""
+          declarations += command
           declare(command)
         case Command.Assert(formula) =>
           lastCheck = ""

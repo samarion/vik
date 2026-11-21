@@ -1,0 +1,22 @@
+; From smtinterpol: interpolation/constarr001.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.15.1 (statusstamp, 2026-11-18; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-option :interpolant-check-mode true)
+(set-option :print-terms-cse false)
+
+(set-logic QF_AUFLIA)
+(declare-fun v () Int)
+(declare-fun w () Int)
+(declare-fun i () Int)
+(declare-fun k () Int)
+(declare-fun a () (Array Int Int))
+
+(assert (! (and (not (= v (select a i))) (= a (store ((as const (Array Int Int)) v) k w))) :named A))
+(assert (! (not (= i k)) :named B))
+
+(set-info :status unsat)
+(check-sat)
+(get-proof)
+(get-interpolants A B)
+(exit)

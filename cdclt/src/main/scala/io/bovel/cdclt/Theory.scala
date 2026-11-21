@@ -32,6 +32,11 @@ trait Theory:
    */
   def phase(v: Var): Option[Boolean] = None
 
+  /** The value a decision on `v` takes whatever the saved phase, when the
+   *  theory needs one: an atom whose other value costs a refinement round.
+   */
+  def firmPhase(v: Var): Option[Boolean] = None
+
   /** The asserted literals that implied `lit`, a literal returned by
    *  [[propagate]] or [[finalCheck]]; they were asserted before it.
    */

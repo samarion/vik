@@ -16,8 +16,14 @@ import io.bovel.lia
 final case class Model(
     constants: Map[String, Term],
     functions: Map[String, Model.Function],
-    datatypes: List[Datatype] = Nil
+    datatypes: List[Datatype] = Nil,
+    maps: Map[String, Pointwise] = Map.empty,
+    finite: Map[String, BigInt] = Map.empty, // the finite index sorts other than Bool and the ranges, by their text
+    constSorts: Map[String, Sort] = Map.empty // the array sort of each `.array.const!N`
 ):
+  /** How many values an index sort has, where the model knows it. */
+  private def sizeOf(sort: String): Option[BigInt] = Model.knownSize(sort).orElse(finite.get(sort))
+
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
   private lazy val selectors: Map[String, (String, Int)] =
@@ -42,6 +48,23 @@ final case class Model(
         case _ => constants.getOrElse(name, term)
     case Term.App(Term.Const(name), List(a, i, v)) if Names.isStore(name) =>
       Model.store(value(a), value(i), value(v))
+    case Term.App(Term.Const(name), List(d)) if Names.isConstArray(name) =>
+      Model.constArray(constSorts.getOrElse(name, Encoder.unknown), value(d))
+    case Term.App(Term.Const(name), arrays) if maps.contains(name) =>
+      // At an index, the template under the elements there. An auxiliary is valued by its definition
+      // where that has the shape [[defined]] reads, and through its graph otherwise.
+      val pointwise = maps(name)
+      val minted = pointwise.auxiliaries.map(_._1).toSet
+      Model.mapArrays(
+        pointwise.sort,
+        arrays.map(value),
+        elements =>
+          val formals = pointwise.params.zip(elements).collect { case (Term.Const(x), e) => x -> e }
+          val local =
+            pointwise.definitions.foldLeft(copy(constants = constants ++ formals))((m, d) => m.defined(d, minted))
+          if minted.forall(local.constants.contains) then local.value(pointwise.value)
+          else value(pointwise.at(elements, (c, actuals) => Term.App(c, actuals))._2)
+      )
     case Term.App(Term.Const(name), List(arg)) if selectors.contains(name) => // a selector on a constructor value
       val (constructor, i) = selectors(name)
       value(arg) match
@@ -85,7 +108,9 @@ final case class Model(
   private def lookup(name: String, values: List[Term]): Term = functions.get(name) match
     // Array arguments are compared extensionally: a row keyed by a store read back is one (issue 49).
     case Some(f) =>
-      f.rows.collectFirst { case (a, r) if a.length == values.length && a.zip(values).forall(Model.same) => r }
+      f.rows.collectFirst {
+        case (a, r) if a.length == values.length && a.zip(values).forall((x, y) => Model.same(x, y, sizeOf)) => r
+      }
         .getOrElse(f.default)
     case None => Term.App(Term.Const(name), values)
 
@@ -118,7 +143,7 @@ final case class Model(
     case Formula.Implies(a, b) => !holds(a) || holds(b)
     case Formula.Iff(a, b) => holds(a) == holds(b)
     case Formula.Ite(c, t, e) => if holds(c) then holds(t) else holds(e)
-    case Formula.Eq(l, r) => Model.same(value(l), value(r))
+    case Formula.Eq(l, r) => Model.same(value(l), value(r), sizeOf)
     // Failing closed: a side the model has no number for makes no bound hold (issue 35).
     case Formula.Le(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ <= _)
     case Formula.Less(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ < _)
@@ -150,6 +175,19 @@ object Model:
   /** `array` with `value` at `index`: `(store array index value)`. */
   def store(array: Term, index: Term, value: Term): Term = Term.App(Term.Const("store"), List(array, index, value))
 
+  /** The map over array values, of sort `sort`, of the operator that gives
+   *  `at(elements)` from the elements of the arrays at an index: `at` of the
+   *  defaults, and of the elements at every index one of the arrays writes.
+   */
+  def mapArrays(sort: Sort, arrays: List[Term], at: List[Term] => Term): Term =
+    val graphs = arrays.map(graph)
+    val default = at(graphs.map(_._1))
+    val indices = graphs.flatMap(_._2.keys).distinct.sortBy(_.toString)
+    indices.foldLeft(constArray(sort, default)) { (acc, i) =>
+      val v = at(arrays.map(select(_, i)))
+      if same(v, default) then acc else store(acc, i, v)
+    }
+
   /** Whether a value is an array, in the form above. */
   def isArray(value: Term): Boolean = value match
     case Term.App(Term.Const("store"), List(_, _, _)) => true
@@ -175,10 +213,51 @@ object Model:
     case _ => (array, Map.empty)
 
   /** Whether two values are the same: arrays extensionally (their elements
-   *  likewise, for arrays of arrays), the rest as terms.
+   *  likewise, for arrays of arrays), the rest as terms. Two arrays of
+   *  different defaults are the same when they agree at indices that are every
+   *  value of their index sort, whose count `size` gives.
    */
-  def same(a: Term, b: Term): Boolean =
+  def same(a: Term, b: Term, size: String => Option[BigInt] = knownSize): Boolean =
     if isArray(a) && isArray(b) then
       val ((da, ma), (db, mb)) = (graph(a), graph(b))
-      same(da, db) && ma.keySet == mb.keySet && ma.forall((i, v) => same(v, mb(i)))
+      val keys = (ma.keySet ++ mb.keySet).toList
+      keys.forall(i => same(select(a, i), select(b, i), size)) &&
+      (same(da, db, size) ||
+        indexSort(a).orElse(indexSort(b)).flatMap(size).exists(n => BigInt(distinct(keys, size).length) >= n))
     else a == b
+
+  /** The values among `values`, each once: an array value has more than one
+   *  form.
+   */
+  private def distinct(values: List[Term], size: String => Option[BigInt]): List[Term] =
+    values.foldLeft(List.empty[Term])((seen, v) => if seen.exists(same(_, v, size)) then seen else v :: seen)
+
+  /** The index sort of an array value, from its constant array's sort. */
+  private def indexSort(array: Term): Option[String] = array match
+    case Term.App(Term.Const("store"), List(a, _, _)) => indexSort(a)
+    case Term.App(Term.Const(name), List(_)) if name.startsWith("(as const (Array ") =>
+      Some(firstExpression(name.stripPrefix("(as const (Array ")))
+    case _ => None
+
+  /** The first s-expression of `text`: a symbol, or up to its closing
+   *  parenthesis.
+   */
+  private def firstExpression(text: String): String =
+    if !text.startsWith("(") then text.takeWhile(c => c != ' ' && c != ')')
+    else
+      val end = text.indices.scanLeft(0)((depth, i) =>
+        depth + (if text(i) == '(' then 1 else if text(i) == ')' then -1 else 0)
+      ).indexWhere(_ == 0, 1)
+      text.take(end)
+
+  /** How many values `Bool`, a bit-vector sort and a range of the integers
+   *  have, which every model knows.
+   */
+  def knownSize(sort: String): Option[BigInt] = sort match
+    case "Bool" => Some(BigInt(2))
+    case bitVector(width) => Some(BigInt(2).pow(width.nn.toInt))
+    case range(lower, upper) => Some(BigInt(upper.nn) - BigInt(lower.nn) + 1)
+    case _ => None
+
+  private[vik] val bitVector = """\(_ BitVec (\d+)\)""".r
+  private val range = """\(_ IntRange (\d+) (\d+)\)""".r

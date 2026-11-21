@@ -1,0 +1,16 @@
+; From smtinterpol: model/array002.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.15.1 (statusstamp, 2026-11-18; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :model-check-mode true)
+(set-logic QF_ALIA)
+
+(declare-const i Int)
+(declare-const a (Array Int Int))
+(declare-const b (Array (Array Int Int) (Array Int Int)))
+
+(assert (distinct (store a i 0) a))
+(assert (distinct (store b a ((as const (Array Int Int)) 0)) b))
+(assert (distinct (store b a a) b))
+(set-info :status sat)
+(check-sat)
+(get-model)
+(get-value (a (store a i 0) b (store b a a)))

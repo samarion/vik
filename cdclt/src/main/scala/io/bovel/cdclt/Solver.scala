@@ -391,6 +391,11 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
       vmtfSearch = v
       if !deferred(v) then vmtfFirst = v
 
+  /** Has `v` decided before the variables decided so far, until a conflict
+   *  moves another in front of it.
+   */
+  def prefer(v: Var): Unit = bump(v)
+
   /** Has `v` decided only when every variable that is not deferred is assigned:
    *  for the variables whose value follows from the others', where a guess made
    *  first is a guess the others then refute one at a time.
@@ -414,7 +419,7 @@ final class Solver(numVars: Int, theory: Theory = NoTheory, restartInterval: Int
     decisions += 1
     trailLim += trail.length
     theory.push()
-    val value = if seen(v) then phase(v) else theory.phase(v).getOrElse(phase(v))
+    val value = theory.firmPhase(v).getOrElse(if seen(v) then phase(v) else theory.phase(v).getOrElse(phase(v)))
     seen(v) = true
     enqueue(Lit(v, value), Decision)
 

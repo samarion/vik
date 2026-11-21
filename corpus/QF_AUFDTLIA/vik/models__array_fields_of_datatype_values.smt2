@@ -4,8 +4,8 @@
 ; script that asserts it, z3 refused the model's text for the unknown constant, and `get-value` threw
 ; `not a number` on arithmetic over a read of the field (issue 139, 2026-11-18).
 ; EXPECT: sat
-; EXPECT: ((x (C (store (store ((as const (Array Int Int)) 0) 0 0) 3 7) 4)) ((arr x) (store (store ((as const (Array Int Int)) 0) 0 0) 3 7)) ((select (arr x) 3) 7) ((+ (select (arr y) 1) 1) 6) ((= (arr x) a) true))
-; EXPECT: ((define-fun a () (Array Int Int) (store (store ((as const (Array Int Int)) 0) 0 0) 3 7)) (define-fun x () D (C (store (store ((as const (Array Int Int)) 0) 0 0) 3 7) 4)) (define-fun y () D (C (store (store ((as const (Array Int Int)) 0) 0 1) 1 5) 8)))
+; EXPECT: ((x (C (store (store ((as const (Array Int Int)) 0) 1 5) 3 7) 4)) ((arr x) (store (store ((as const (Array Int Int)) 0) 1 5) 3 7)) ((select (arr x) 3) 7) ((+ (select (arr y) 1) 1) 6) ((= (arr x) a) true))
+; EXPECT: ((define-fun a () (Array Int Int) (store (store ((as const (Array Int Int)) 0) 1 5) 3 7)) (define-fun x () D (C (store (store ((as const (Array Int Int)) 0) 1 5) 3 7) 4)) (define-fun y () D (C (store (store ((as const (Array Int Int)) 0) 1 5) 3 7) 8)))
 (set-logic ALL)
 (set-option :produce-models true)
 (declare-datatype D ((C (arr (Array Int Int)) (len Int))))
