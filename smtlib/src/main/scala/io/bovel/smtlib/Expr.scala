@@ -28,6 +28,21 @@ enum Term:
   case BvApp(op: BvOp, args: List[Term])
   case Select(array: Term, index: Term)
   case Store(array: Term, index: Term, value: Term)
+
+  /** The array of `sort` holding `value` at every index:
+   *  `((as const sort) value)`.
+   */
+  case ConstArray(sort: Sort, value: Term)
+
+  /** The array holding, at every index, `op` of what the arrays hold there:
+   *  `((_ map op) arrays...)`, for any `op` a term can apply — a connective
+   *  (the union of sets as arrays of Booleans), an arithmetic operation (the
+   *  sum of bags as arrays of integers), a declared or defined function. `op`
+   *  is as written, for the printer; `body` is its application to `params`, one
+   *  per array and of its element sort, which is what the map means at an
+   *  index.
+   */
+  case MapArray(op: String, params: List[(String, Sort)], body: Term, arrays: List[Term])
   case Ite(cond: Formula, thn: Term, els: Term)
   case Let(bindings: List[(String, Term | Formula)], body: Term)
 

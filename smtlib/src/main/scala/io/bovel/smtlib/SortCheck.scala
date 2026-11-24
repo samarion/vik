@@ -66,6 +66,23 @@ private[smtlib] final class SortCheck(
           expect(term(v, env), element, "the value of a store")
           s
         case s => throw Smt2Error(s"store on ${s.text}")
+    case Term.MapArray(op, params, body, arrays) =>
+      val indices = arrays.map(term(_, env)).zip(params).map {
+        case (Sort.Array(index, element), (_, param)) =>
+          expect(element, param, s"an element of an array of (_ map $op)")
+          index
+        case (s, _) => throw Smt2Error(s"(_ map $op) on ${s.text}")
+      }
+      for i <- indices.tail do
+        if i != indices.head then
+          throw Smt2Error(s"(_ map $op) on arrays indexed by ${indices.head.text} and ${i.text}")
+      Sort.Array(indices.head, term(body, env ++ params))
+    case Term.ConstArray(sort, v) =>
+      sort match
+        case Sort.Array(_, element) =>
+          expect(term(v, env), element, "the value of a constant array")
+          sort
+        case s => throw Smt2Error(s"a constant array of ${s.text}")
     case Term.Ite(c, thn, els) =>
       formula(c, env)
       join(term(thn, env), term(els, env), "the branches of an ite")

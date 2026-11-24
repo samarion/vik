@@ -20,8 +20,16 @@ import io.bovel.lia
 final case class Model(
     constants: Map[String, Term],
     functions: Map[String, Model.Function],
-    datatypes: List[Datatype] = Nil
+    datatypes: List[Datatype] = Nil,
+    maps: Map[String, Pointwise] = Map.empty,
+    finite: Map[String, List[Term]] = Map.empty, // the values of the small finite index sorts, by the sort's text
+    constSorts: Map[String, Sort] = Map.empty // the array sort of each `.array.const!N`
 ):
+  /** The values of the finite index sorts this model's arrays are compared over
+   *  ([[Model.Finite]]).
+   */
+  private given Model.Finite = Model.Finite(finite.get)
+
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
   private lazy val selectors: Map[String, (String, Int)] =
@@ -46,6 +54,23 @@ final case class Model(
         case _ => constants.getOrElse(name, term)
     case Term.App(Term.Const(name), List(a, i, v)) if Names.isStore(name) =>
       Model.store(value(a), value(i), value(v))
+    case Term.App(Term.Const(name), List(d)) if Names.isConstArray(name) =>
+      Model.constArray(constSorts.getOrElse(name, Encoder.unknown), value(d))
+    case Term.App(Term.Const(name), arrays) if maps.contains(name) =>
+      // At an index, the template under the elements there. An auxiliary is valued by its definition
+      // where that has the shape [[defined]] reads, and through its graph otherwise.
+      val pointwise = maps(name)
+      val minted = pointwise.auxiliaries.map(_._1).toSet
+      Model.mapArrays(
+        pointwise.sort,
+        arrays.map(value),
+        elements =>
+          val formals = pointwise.params.zip(elements).collect { case (Term.Const(x), e) => x -> e }
+          val local =
+            pointwise.definitions.foldLeft(copy(constants = constants ++ formals))((m, d) => m.defined(d, minted))
+          if minted.forall(local.constants.contains) then local.value(pointwise.value)
+          else value(pointwise.at(elements, (c, actuals) => Term.App(c, actuals))._2)
+      )
     case Term.App(Term.Const(name), List(arg)) if selectors.contains(name) => // a selector on a constructor value
       val (constructor, i) = selectors(name)
       value(arg) match
@@ -121,6 +146,12 @@ final case class Model(
    */
   def same(a: Term, b: Term): Boolean = a == b || (anyArray && Model.same(a, b))
 
+  /** [[Model.select]] and [[Model.mapArrays]] over this model's finite index
+   *  sorts.
+   */
+  def select(array: Term, index: Term): Term = Model.select(array, index)
+  def mapArrays(sort: Sort, arrays: List[Term], at: List[Term] => Term): Term = Model.mapArrays(sort, arrays, at)
+
   private lazy val anyArray: Boolean =
     datatypes.exists(_.constructors.exists(_.selectors.exists((_, s) => s.arrow.isDefined)))
       || functions.valuesIterator.exists(f => (f.result :: f.parameters).exists(_.arrow.isDefined))
@@ -173,6 +204,19 @@ object Model:
   /** `array` with `value` at `index`: `(store array index value)`. */
   def store(array: Term, index: Term, value: Term): Term = Term.App(Term.Const("store"), List(array, index, value))
 
+  /** The map over array values, of sort `sort`, of the operator that gives
+   *  `at(elements)` from the elements of the arrays at an index: `at` of the
+   *  defaults, and of the elements at every index one of the arrays writes.
+   */
+  def mapArrays(sort: Sort, arrays: List[Term], at: List[Term] => Term)(using Finite): Term =
+    val graphs = arrays.map(graph)
+    val default = at(graphs.map(_._1))
+    val indices = graphs.flatMap(_._2.keys).distinct.sortBy(_.toString)
+    indices.foldLeft(constArray(sort, default)) { (acc, i) =>
+      val v = at(arrays.map(select(_, i)))
+      if same(v, default) then acc else store(acc, i, v)
+    }
+
   /** Whether a value is an array, in the form above. */
   def isArray(value: Term): Boolean = value match
     case Term.App(Term.Const("store"), List(_, _, _)) => true
@@ -182,7 +226,7 @@ object Model:
   /** The element of an array value at an index: the innermost write to it, else
    *  the default.
    */
-  def select(array: Term, index: Term): Term = array match
+  def select(array: Term, index: Term)(using Finite): Term = array match
     case Term.App(Term.Const("store"), List(a, i, v)) => if same(i, index) then v else select(a, index)
     case Term.App(Term.Const(name), List(d)) if name.startsWith("(as const ") => d
     case _ => Term.App(array, List(index))
@@ -190,7 +234,7 @@ object Model:
   /** An array value as its default and the map of the indices written to a
    *  value other than it, all in normal form ([[normal]]).
    */
-  def graph(array: Term): (Term, Map[Term, Term]) = array match
+  def graph(array: Term)(using Finite): (Term, Map[Term, Term]) = array match
     case Term.App(Term.Const("store"), List(a, i, v)) =>
       val (d, m) = graph(a)
       val (index, value) = (normal(i), normal(v))
@@ -203,7 +247,8 @@ object Model:
    *  every comparison, the large datatype values of a Stainless session took
    *  its model check from 2.4 s to 6.5 s.
    */
-  def same(a: Term, b: Term): Boolean = a == b || (holdsArray(a) && holdsArray(b) && normal(a) == normal(b))
+  def same(a: Term, b: Term)(using Finite): Boolean = a == b ||
+    (holdsArray(a) && holdsArray(b) && normal(a) == normal(b))
 
   private def holdsArray(value: Term): Boolean = isArray(value) ||
     (value match
@@ -220,9 +265,12 @@ object Model:
    *  Over a finite index sort with few values, an array is the function it is
    *  at every index, and its default the element at the first: over `Bool`, "0
    *  with `true` at 1" and "1 with `false` at 0" are one array, and so are "0
-   *  with `false` at 2 and `true` at 1" and "2 with `true` at 1".
+   *  with `false` at 2 and `true` at 1" and "2 with `true` at 1". The values of
+   *  `Bool` and of a small range of the integers are known; those of another
+   *  finite sort, a datatype without a field of an infinite sort, are given
+   *  ([[Finite]]).
    */
-  def normal(value: Term): Term =
+  def normal(value: Term)(using Finite): Term =
     if isArray(value) then
       val (d, m) = graph(value)
       val (default, writes) = indexValues(base(value)) match
@@ -248,11 +296,19 @@ object Model:
     case Term.App(head, List(_)) => head
     case _ => array
 
-  /** Every value of a finite index sort that a model writes as an index, when
-   *  there are few: the Booleans, the bit-vectors of up to 8 bits. Read from
-   *  the head of a constant array.
+  /** The values of the finite index sorts other than `Bool` and the ranges of
+   *  the integers, by the sort's text, where there are few: what the solver was
+   *  told of them ([[Command.DeclareFinite]]). None by default.
    */
-  private def indexValues(head: Term): Option[List[Term]] = head match
+  final class Finite(val values: String => Option[List[Term]])
+  object Finite:
+    given none: Finite = Finite(_ => None)
+
+  /** Every value of a finite index sort that a model writes as an index, when
+   *  there are few: the Booleans, the bit-vectors of up to 8 bits, the values
+   *  given of another sort. Read from the head of a constant array.
+   */
+  private def indexValues(head: Term)(using finite: Finite): Option[List[Term]] = head match
     case Term.Const(name) if name.startsWith("(as const (Array ") =>
       val rest = name.stripPrefix("(as const (Array ")
       if rest.startsWith("Bool ") then Some(List(Term.Bool(Formula.False), Term.Bool(Formula.True)))
@@ -260,5 +316,16 @@ object Model:
         """\(_ IntRange (-?\d+) (-?\d+)\) """.r.findPrefixMatchOf(rest).flatMap { m =>
           val (lower, upper) = (BigInt(m.group(1).nn), BigInt(m.group(2).nn))
           Option.when(upper - lower < 256)(List.range(lower, upper + 1).map(Term.Num(_)))
-        }
+        }.orElse(finite.values(firstExpression(rest)))
     case _ => None
+
+  /** The first s-expression of `text`: a symbol, or up to its closing
+   *  parenthesis.
+   */
+  private def firstExpression(text: String): String =
+    if !text.startsWith("(") then text.takeWhile(c => c != ' ' && c != ')')
+    else
+      val end = text.indices.scanLeft(0)((depth, i) =>
+        depth + (if text(i) == '(' then 1 else if text(i) == ')' then -1 else 0)
+      ).indexWhere(_ == 0, 1)
+      text.take(end)

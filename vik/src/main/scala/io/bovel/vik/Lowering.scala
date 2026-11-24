@@ -143,6 +143,7 @@ private final class Lowerer:
     rationalProducts.clear()
     loweredOperations.clear()
     loweredDivisions.clear()
+    quotients.clear()
     loweredSignedDivisions.clear()
     loweredBits.clear()
     bitConstants.clear()
@@ -222,7 +223,13 @@ private final class Lowerer:
         case ArithOp.Div => number(values.reduce(_ / _)) // a zero divisor is refused before this, by the lowering
         case ArithOp.ToReal => number(values.head)
         case ArithOp.ToInt => Num(values.head.floor)
-        case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs => throw s2.Unsupported(s"${op.name} is not supported")
+        case ArithOp.Abs => Num(integer(eval(args.head, model, scope)).abs)
+        case ArithOp.IntDiv | ArithOp.Mod =>
+          // As SMT-LIB defines them: the remainder is in `[0, |b|)`.
+          val (a, b) = (integer(eval(args.head, model, scope)), args.tail.map(d => integer(eval(d, model, scope))))
+          if b.exists(_.signum == 0) then throw s2.Unsupported(s"${op.name} by zero is not supported")
+          if op == ArithOp.Mod then Num(a.mod(b.head.abs))
+          else Num(b.foldLeft(a)((n, d) => (n - n.mod(d.abs)) / d))
     case s2.Term.BvApp(op, args) =>
       val widths = args.map(a =>
         sortOf(a, scope.sorts) match
@@ -230,9 +237,22 @@ private final class Lowerer:
           case _ => 0 // the integer of `int_to_bv`
       )
       Num(bitVector(op, args.map(a => integer(eval(a, model, scope))), widths))
-    case s2.Term.Select(array, index) => Model.select(eval(array, model, scope), eval(index, model, scope))
+    case s2.Term.Select(array, index) => model.select(eval(array, model, scope), eval(index, model, scope))
     case s2.Term.Store(array, index, value) =>
       Model.store(eval(array, model, scope), eval(index, model, scope), eval(value, model, scope))
+    case s2.Term.ConstArray(sort, value) => Model.constArray(lowered(sort), eval(value, model, scope))
+    case s2.Term.MapArray(_, params, body, arrays) =>
+      // The operator sees the elements and the declarations, never the bindings around the map.
+      model.mapArrays(
+        lowered(sortOf(t, scope.sorts)),
+        arrays.map(eval(_, model, scope)),
+        elements =>
+          eval(
+            body,
+            model,
+            params.zip(elements).foldLeft(Scope.empty) { case (inner, ((p, sort), e)) => inner.bound(p, e, sort) }
+          )
+      )
     case s2.Term.Ite(c, thn, els) => if truth(c, model, scope) then eval(thn, model, scope) else eval(els, model, scope)
     case s2.Term.Let(bindings, body) => eval(body, model, bindAll(bindings, model, scope))
     case s2.Term.Bool(f) => Term.boolean(if truth(f, model, scope) then True else False)
@@ -460,6 +480,9 @@ private final class Lowerer:
       // array from a function by that.
       List(Command.DeclareFun(name, argSorts.map(lowered), lowered(sort)))
     case s2.Command.DeclareDatatypes(datatypes) =>
+      for datatype <- datatypes do
+        undoable(declaredDatatypes, datatype.name)
+        declaredDatatypes(datatype.name) = datatype
       for datatype <- datatypes; constructor <- datatype.constructors do
         val d = s2.Sort.Named(datatype.name)
         reserve(constructor.name)
@@ -505,6 +528,10 @@ private final class Lowerer:
       macros.clear()
       rationalValues.clear()
       storeSymbols.clear()
+      constSymbols.clear()
+      declaredDatatypes.clear()
+      finiteSorts.clear()
+      mapSymbols.clear()
       clearMemos()
       List(Command.Reset)
     case s2.Command.GetModel => List(Command.GetModel)
@@ -524,7 +551,10 @@ private final class Lowerer:
       // The symbols minted here are declared for good: a `.store!N` stays in `storeSymbols`, and a later
       // assertion that reuses it needs the solver to know it (issue 16). Their definitions cannot be
       // asserted after a check and go with the command instead.
-      val declared = pending.toList.collect { case declaration: Command.DeclareFun => declaration }
+      val declared = pending.toList.filter {
+        case _: Command.DeclareFun | _: Command.DeclareMap | _: Command.DeclareFinite => true
+        case _ => false
+      }
       pending.clear()
       clearMemos() // a constant minted here has no definition: later uses must not find it
       declared :+ Command.GetValue(lowered, defined)
@@ -586,6 +616,11 @@ private final class Lowerer:
         case s2.Sort.Array(_, element) => element
         case s => s.applied(1).getOrElse(throw s2.Smt2Error(s"select on $s"))
     case s2.Term.Store(array, _, _) => sortOf(array, env)
+    case s2.Term.ConstArray(sort, _) => sort
+    case s2.Term.MapArray(op, params, body, arrays) =>
+      sortOf(arrays.head, env) match
+        case s2.Sort.Array(index, _) => s2.Sort.Array(index, sortOf(body, elementsEnv(params)))
+        case s => throw s2.Smt2Error(s"(_ map $op) on $s")
     case s2.Term.Ite(_, thn, els) =>
       // Real when either branch is: a numeral beside a real term is a real (issue 15).
       val t = sortOf(thn, env)
@@ -722,6 +757,10 @@ private final class Lowerer:
       App(term(array, env), List(term(index, env)))
     case s2.Term.Store(array, index, value) =>
       App(storeSymbol(sortOf(array, env)), List(term(array, env), term(index, env), term(value, env)))
+    case s2.Term.ConstArray(sort, value) => App(constSymbol(sort), List(term(value, env)))
+    case s2.Term.MapArray(op, params, body, arrays) =>
+      val lowered = arrays.map(term(_, env))
+      App(mapSymbol(op, params, body, arrays.map(sortOf(_, env)), sortOf(t, env), lowered), lowered)
     case s2.Term.Ite(cond, thn, els) =>
       // A fresh constant `k` with `cond => k = thn` and `not cond => k = els`, asserted before the
       // current assertion; one per distinct `ite`, like the bit-vector operations.
@@ -791,8 +830,54 @@ private final class Lowerer:
       literalValue(r) match
         case Some((p, q)) => Num(floorDiv(p, q))
         case None => floor(r)
-    case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs =>
-      throw s2.Unsupported(s"${op.name} is not supported")
+    case ArithOp.Abs =>
+      // A fresh constant `k` with `t ≥ 0 => k = t` and `t < 0 => k = -t`, like a term-level `ite`.
+      term(args.head, env) match
+        case Num(v) => Num(v.abs)
+        case t =>
+          loweredOperations.getOrElseUpdate(
+            ("abs", List(t), Nil), {
+              val name = freshName("abs")
+              introduce(name, Sort.Int)
+              functions(name) = s2.Sort.Int
+              val k = Const(name)
+              define(Implies(Ge(t, Num(0)), IntEq(k, t)))
+              define(Implies(Lt(t, Num(0)), IntEq(k, Term.linear(List((BigInt(-1), t))))))
+              k
+            }
+          )
+    case ArithOp.IntDiv | ArithOp.Mod =>
+      // By nonzero numerals only, which keeps it linear: the rest is outside the fragment.
+      val divisors = args.tail.map(d =>
+        term(d, env) match
+          case Num(n) if n.signum != 0 => n
+          case _ => throw s2.Unsupported(s"${op.name} by other than a nonzero numeral is not supported")
+      )
+      if op == ArithOp.Mod then quotient(term(args.head, env), divisors.head)._2
+      else divisors.foldLeft(term(args.head, env))((t, n) => quotient(t, n)._1)
+
+  private val quotients = Memo[(Term, BigInt), (Term, Term)]()
+
+  /** `(div t n, mod t n)` for a nonzero numeral `n`, as SMT-LIB defines them:
+   *  fresh constants `q` and `r` with `t = n q + r` and `0 ≤ r < |n|`, which
+   *  pins both, so the definition is sound under both polarities.
+   */
+  private def quotient(t: Term, n: BigInt): (Term, Term) = t match
+    case Num(v) =>
+      val r = v.mod(n.abs)
+      (Num((v - r) / n), Num(r))
+    case _ =>
+      quotients.getOrElseUpdate(
+        (t, n), {
+          val name = freshName("div")
+          introduce(name, Sort.Int)
+          functions(name) = s2.Sort.Int
+          val q = Const(name)
+          val r = freshInt("mod", 0, n.abs - 1)
+          define(IntEq(t, Term.linear(List((n, q), (BigInt(1), r)))))
+          (q, r)
+        }
+      )
 
   /** `is_int r`: `r` equals its own floor — sound under negation too, the floor
    *  being pinned uniquely by its definition. A literal folds.
@@ -879,6 +964,242 @@ private final class Lowerer:
           k
         }
       )
+
+  /** The datatypes declared, as written, whose values the lowering counts and
+   *  builds for [[noteIndex]].
+   */
+  private val declaredDatatypes = HashMap.empty[String, s2.Datatype]
+
+  /** The finite index sorts of the constant arrays and maps, by their text,
+   *  whose count and values went to the solver: undone with the level of their
+   *  datatype, which a later declaration may name anew.
+   */
+  private val finiteSorts = HashMap.empty[String, BigInt]
+
+  private val manyValues = BigInt(1) << 62
+
+  /** Tells the solver how many values the index sort of a constant array or a
+   *  map has, and how to build the `k`-th of them ([[Command.DeclareFinite]]),
+   *  for a finite sort other than `Bool` and the bit-vectors, whose values the
+   *  solver knows: the index it takes beyond the writes ([[Encoder.beyond]]) is
+   *  apart from fewer of them than the sort has values, and the arrays are read
+   *  at every value from then on, which the solver builds then.
+   */
+  private def noteIndex(arraySort: s2.Sort): Unit = arraySort match
+    case s2.Sort.Array(s2.Sort.Bool | s2.Sort.BitVec(_), _) => ()
+    case s2.Sort.Array(index, _) =>
+      val key = lowered(index)
+      if !finiteSorts.contains(key.text) then
+        for n <- cardinality(index) do
+          undoable(finiteSorts, key.text)
+          finiteSorts(key.text) = n
+          val build = shape(index) // its symbols declared now: the solver declares none of its own
+          pending += Command.DeclareFinite(key, n, k => build.value(k))
+    case _ => ()
+
+  /** A finite sort as the solver builds its values: what a value is made of,
+   *  with the symbols that make it, and how many values there are.
+   */
+  private sealed trait Shape:
+    def size: BigInt
+
+    /** The `k`-th value, for `0 ≤ k < size`: `k` read in mixed radix. */
+    def value(k: BigInt): Term
+
+  private final case class Constructors(constructors: List[(String, List[Shape])]) extends Shape:
+    private val sizes = constructors.map(_._2.foldLeft(BigInt(1))((n, f) => (n * f.size).min(manyValues)))
+    val size: BigInt = sizes.sum.min(manyValues)
+    def value(k: BigInt): Term =
+      // The constructor whose values `k` falls among, then its fields: the last varies fastest.
+      val starts = sizes.scanLeft(BigInt(0))(_ + _)
+      val c = sizes.indices.find(i => k < starts(i + 1)).get
+      val (name, fields) = constructors(c)
+      if fields.isEmpty then Const(name)
+      else
+        val (args, _) = fields.foldRight((List.empty[Term], k - starts(c))) { case (f, (done, rest)) =>
+          (f.value(rest % f.size) :: done, rest / f.size)
+        }
+        App(Const(name), args)
+
+  private final case class Bits(width: Int) extends Shape:
+    val size: BigInt = BigInt(2).pow(width)
+    def value(k: BigInt): Term = Num(k)
+
+  private object Booleans extends Shape:
+    val size: BigInt = BigInt(2)
+    def value(k: BigInt): Term = Term.boolean(if k == 0 then True else False)
+
+  /** The arrays from `index` to `element`; `index` is `None` (and may be
+   *  infinite) when `element` has a single value, and so do the arrays.
+   */
+  private final case class Arrays(index: Option[Shape], element: Shape, const: Term, store: Term) extends Shape:
+    val size: BigInt = index match
+      case None => BigInt(1)
+      case Some(i) => if i.size >= 64 then manyValues else element.size.pow(i.size.toInt).min(manyValues)
+    def value(k: BigInt): Term = index match
+      case None => App(const, List(element.value(0)))
+      case Some(i) =>
+        // A store at every index, over the constant array of the first element.
+        val (at, _) = (0 until i.size.toInt).foldLeft((List.empty[(Term, Term)], k)) { case ((done, rest), j) =>
+          ((i.value(BigInt(j)), element.value(rest % element.size)) :: done, rest / element.size)
+        }
+        at.reverse.foldLeft(App(const, List(element.value(0))): Term) { case (a, (j, v)) => App(store, List(a, j, v)) }
+
+  /** The shape of a finite sort, declaring the symbols of its arrays. */
+  private def shape(sort: s2.Sort): Shape = sort match
+    case s2.Sort.Bool => Booleans
+    case s2.Sort.BitVec(w) => Bits(w)
+    case s2.Sort.Named(name) =>
+      Constructors(declaredDatatypes(name).constructors.map(c => (c.name, c.selectors.map((_, f) => shape(f)))))
+    case s2.Sort.Array(index, element) =>
+      val e = shape(element)
+      Arrays(if e.size == 1 then None else Some(shape(index)), e, constSymbol(sort), storeSymbol(sort))
+    case _ => throw s2.Smt2Error(s"the values of the infinite sort ${sort.text}")
+
+  /** How many values a sort has, `None` for infinitely many: `Bool`, a
+   *  bit-vector, a datatype with no field of an infinite sort or of its own, an
+   *  array between finite sorts or into a sort of one value. An uninterpreted
+   *  sort has as many as a model needs. Capped at [[manyValues]].
+   */
+  private def cardinality(sort: s2.Sort, open: Set[String] = Set.empty): Option[BigInt] = sort match
+    case s2.Sort.Bool => Some(BigInt(2))
+    case s2.Sort.BitVec(w) => Some(if w >= 62 then manyValues else BigInt(2).pow(w))
+    case s2.Sort.Named(name) if !open(name) =>
+      declaredDatatypes.get(name).flatMap { d =>
+        val counts = d.constructors.map(_.selectors.foldLeft(Option(BigInt(1)))((acc, field) =>
+          for n <- acc; m <- cardinality(field._2, open + name) yield (n * m).min(manyValues)
+        ))
+        if counts.forall(_.isDefined) then Some(counts.flatten.sum.min(manyValues)) else None
+      }
+    case s2.Sort.Array(index, element) =>
+      (cardinality(index, open), cardinality(element, open)) match
+        case (_, Some(m)) if m == 1 => Some(m)
+        case (Some(n), Some(m)) => Some(if n >= 64 then manyValues else m.pow(n.toInt).min(manyValues))
+        case _ => None
+    case _ => None
+
+  /** The `.array.const!N` function symbol for the constant arrays of `sort`,
+   *  declared on first use like a [[storeSymbol]]: a function of the element to
+   *  the array, which the solver's array lemmas recognize by the name.
+   */
+  private val constSymbols = HashMap.empty[Sort, String]
+
+  private def constSymbol(arraySort: s2.Sort): Term =
+    noteIndex(arraySort)
+    val key = lowered(arraySort)
+    val name = constSymbols.getOrElseUpdate(
+      key, {
+        val element = key.after(1).getOrElse(throw s2.Smt2Error(s"a constant array of $arraySort"))
+        val n = freshName("array.const")
+        introduce(n, Sort.fun(List(element), key))
+        functions(n) = s2.Sort.Named(n)
+        n
+      }
+    )
+    Const(name)
+
+  /** The `.array.map!N` function symbol for the map of an operator over arrays,
+   *  declared on first use like a [[storeSymbol]], with the [[Pointwise]]
+   *  template that says what the map holds at an index: the solver's array
+   *  lemmas instantiate it there. Keyed on the template itself, its names aside
+   *  ([[Pointwise.canonical]]), and on the sorts of the arrays and of the map:
+   *  the operator as it stands where the map is, a macro defined anew after a
+   *  `pop` making another template, and the bit-vector operations of each width
+   *  theirs. The numerals of the constant arrays among the arrays are folded
+   *  into the template: `div` by `((as const (Array I Int)) 2)` is linear that
+   *  way.
+   */
+  private val mapSymbols = HashMap.empty[(Pointwise, List[Sort], Sort), String]
+
+  /** The parameters of a map's operator as an environment, for [[sortOf]]. */
+  private def elementsEnv(params: List[(String, s2.Sort)]): Env =
+    params.map((p, s) => p -> (if s == s2.Sort.Bool then Value.F(True) else Value.T(Const(p), s))).toMap
+
+  private def mapSymbol(
+      op: String,
+      params: List[(String, s2.Sort)],
+      body: s2.Term,
+      arraySorts: List[s2.Sort],
+      result: s2.Sort,
+      arrays: List[Term]
+  ): Term =
+    noteIndex(result)
+    val keys = arraySorts.map(lowered)
+    val resultKey = lowered(result)
+    if (resultKey :: keys).exists(_.arrow.isEmpty) then
+      throw s2.Smt2Error(s"(_ map $op) on ${arraySorts.map(_.text).mkString(" ")}")
+    val literals = arrays.map {
+      case App(Const(c), List(v @ Num(_))) if Names.isConstArray(c) => Some(v)
+      case _ => None
+    }
+    // The operator is lowered on its own, over placeholders for the elements: what that mints belongs to
+    // the template, and nothing of the assertion around the map is to be found in it.
+    val around = pending.toList
+    pending.clear()
+    clearMemos()
+    val (kept, pointwise) =
+      try
+        val elements = params.zip(literals).map {
+          case (_, Some(v)) => v
+          case ((_, _), None) => Const(freshName("element"))
+        }
+        val inner: Env = params.zip(elements).map { case ((p, sort), x) =>
+          p -> (if sort == s2.Sort.Bool then Value.F(Formula.pred(x)) else Value.T(x, sort))
+        }.toMap
+        val value = term(body, inner)
+        val formals = params.zip(elements).collect { case ((_, sort), Const(_)) => lowered(sort) }
+        // An array operation of the operator's is declared like any other; the rest is the template's.
+        val (kept, auxiliaries, definitions) = pending.toList.foldRight(
+          (List.empty[Command], List.empty[(String, List[Sort], Sort)], List.empty[Formula])
+        ) {
+          case (Command.DeclareFun(n, Nil, sort, _), (k, a, d)) if !Names.isArrayOperation(n) =>
+            (k, (n, formals, sort) :: a, d)
+          case (Command.Assert(definition), (k, a, d)) => (k, a, definition :: d)
+          case (command, (k, a, d)) => (command :: k, a, d)
+        }
+        val pointwise = Pointwise(elements, auxiliaries, value, definitions, resultKey)
+        val locals = elements.collect { case Const(n) => n }.toSet ++ auxiliaries.map(_._1)
+        if (value :: definitions.flatMap(_.terms)).exists(readsAt(_, locals)) then
+          throw s2.Unsupported(s"(_ map $op): an operator that reads or writes an array at an element is not supported")
+        (kept, pointwise)
+      finally
+        pending.clear()
+        pending ++= around
+        clearMemos()
+    pending ++= kept
+    val name = mapSymbols.getOrElseUpdate(
+      (pointwise.canonical, keys, resultKey), {
+        val f = freshName("array.map")
+        pending += Command.DeclareMap(f, Sort.fun(keys, resultKey), pointwise)
+        functions(f) = s2.Sort.Named(f)
+        f
+      }
+    )
+    Const(name)
+
+  /** Whether `t` reads or writes an array at an index that one of `locals` (the
+   *  elements of a map's operator, its auxiliaries) is in: the map's lemmas
+   *  would make an index of each element, and read every array of its sort
+   *  there, the map among them, whose elements there are indices in turn,
+   *  without end — `c = ((_ map g) a)` with `g(x) = (select c x)` says
+   *  `c[j] = c[a[j]]` at every index `j`. A read or a write at a fixed index,
+   *  of an element that is itself an array as much as of another array, is
+   *  fine, and so is an application of a declared function.
+   */
+  private def readsAt(t: Term, locals: Set[String]): Boolean =
+    def mentions(u: Term) = Term.constants(u).exists(locals)
+    t match
+      case App(Const(n), List(a, i, v)) if Names.isStore(n) =>
+        mentions(i) || readsAt(a, locals) || readsAt(i, locals) || readsAt(v, locals)
+      case App(Const(n), args) if Names.isConstArray(n) || Names.isMap(n) => args.exists(readsAt(_, locals))
+      case App(fun, args) =>
+        val array = fun match
+          case Const(n) => locals(n) || functions.get(n).exists(_.isInstanceOf[s2.Sort.Array])
+          case _ => true // an array that is itself a read or a write
+        (array && args.exists(mentions)) || readsAt(fun, locals) || args.exists(readsAt(_, locals))
+      case Term.Linear(terms, _) => terms.exists((_, u) => readsAt(u, locals))
+      case Term.Bool(formula) => formula.terms.exists(readsAt(_, locals))
+      case _ => false
 
   private val rationalProducts = Memo[(BigInt, BigInt, Term), Term]()
 
