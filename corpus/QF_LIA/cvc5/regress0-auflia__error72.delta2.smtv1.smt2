@@ -1,0 +1,7 @@
+; From cvc5: regress0/auflia/error72.delta2.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_LIA, the smallest the script fits, for QF_AUFLIA (prune logic)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_LIA)
+(declare-fun v1 () Int)
+(check-sat-assuming ( (>= (- (ite (distinct v1 0) v1 0)) 0) ))

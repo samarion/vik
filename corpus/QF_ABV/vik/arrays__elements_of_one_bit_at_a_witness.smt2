@@ -1,0 +1,31 @@
+; Hand-written for VIK (this repository's license): an array is told apart from another by a witness index,
+; and the solver makes the two reads at it itself. Their elements are bit-vectors: while the lowering
+; asserted the ranges of the terms it met, these reads were integers of any size, and five arrays of one bit
+; to one bit, of which there are four, could be pairwise distinct (issue 154, 2026-11-17).
+(set-logic QF_ABV)
+(declare-const a1 (Array (_ BitVec 1) (_ BitVec 1)))
+(declare-const a2 (Array (_ BitVec 1) (_ BitVec 1)))
+(declare-const a3 (Array (_ BitVec 1) (_ BitVec 1)))
+(declare-const a4 (Array (_ BitVec 1) (_ BitVec 1)))
+(declare-const a5 (Array (_ BitVec 1) (_ BitVec 1)))
+(push 1)
+(assert (distinct a1 a2 a3 a4))
+(set-info :status sat)
+(check-sat)
+(pop 1)
+(push 1)
+(assert (distinct a1 a2 a3 a4 a5))
+(set-info :status unsat)
+(check-sat)
+(pop 1)
+; Three arrays that agree at one index differ at the other, which has two values.
+(assert (= (select a1 #b0) (select a2 #b0)))
+(assert (= (select a1 #b0) (select a3 #b0)))
+(push 1)
+(assert (distinct a1 a2))
+(set-info :status sat)
+(check-sat)
+(pop 1)
+(assert (distinct a1 a2 a3))
+(set-info :status unsat)
+(check-sat)

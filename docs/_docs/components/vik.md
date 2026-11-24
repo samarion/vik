@@ -50,13 +50,11 @@ the `check-sat`s of a script: what one check learns, the next one keeps.
 What a model holds: every declared constant, of every sort — an integer, a rational `(/ 1 3)`, a Boolean, an
 element `@U!0` of an uninterpreted sort, a constructor term for a datatype; and a finite graph per declared
 function or array, as an `ite` chain over the applications the assertions mention,
-with a default for the rest. Its edges: a bit-vector constant is printed as its unsigned integer, with sort
-`Int`, since the solver lowered it; a datatype component the assertions never touched is an element
-`@List!0` rather than a constructor term; the constants the lowering introduced (`ite!1`, `floor!2`) are
-printed with the rest; and `get-value` evaluates constants, literals and applications of
-declared symbols, but an operation the lowering defines through an auxiliary constant — `ite`, the
-bit-vector operations — comes back as that constant's name (`ite!3`) rather than a value. After an
-`unsat` or `unknown`, the answer is `(error "no model")`.
+with a default for the rest. A bit-vector is printed as one, `#b0100`, at the sort the script declared. The
+constants the lowering introduces (`.ite!1`, `.bv!2`) stay out: their names start with `.`, which SMT-LIB
+reserves for the solver, and a script cannot declare such a name. `get-value` evaluates any term the
+script could assert, operations included. After an `unsat` or `unknown`, the answer is
+`(error "no model")`.
 
 ```smt2
 (declare-const x Int)

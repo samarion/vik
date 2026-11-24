@@ -68,6 +68,105 @@ class SolverTest extends munit.FunSuite:
     assertEquals(run("(assert (not (= (select (g a) 1) (select (g b) 1))))"), List("unsat"))
     assertEquals(run("(assert (= (f a) (f b)))"), List("sat"))
 
+  test("arrays under a function with no integer or store around"):
+    // The pass that pairs the arrays under a function or a constructor ran only beside an arithmetic term
+    // or a store; and the equalities it made got their witnesses only when the same round of the passes
+    // emitted a clause, which the last two scripts' rounds do not, with or without an integer (issue 133).
+    def run(text: String) = Session.run(io.bovel.smtlib.Parser.parse(s"""
+      (declare-const a1 (Array Bool Bool)) (declare-const a2 (Array Bool Bool))
+      (declare-const a3 (Array Bool Bool)) (declare-const a4 (Array Bool Bool))
+      (declare-const a5 (Array Bool Bool))
+      $text
+      (check-sat)"""))
+    val agree = "(assert (= (select a1 true) (select a2 true))) (assert (= (select a1 false) (select a2 false)))"
+    val p = "(declare-fun p ((Array Bool Bool)) Bool)"
+    val f = "(declare-sort U 0) (declare-fun f ((Array Bool Bool)) U)"
+    val mk = "(declare-datatype P ((mk (arr (Array Bool Bool)))))"
+    assertEquals(run(s"$p (assert (distinct (p a1) (p a2))) $agree"), List("unsat"))
+    assertEquals(run(s"$mk (assert (distinct (mk a1) (mk a2))) $agree"), List("unsat"))
+    // Bool to Bool has four arrays: five applications cannot be distinct, four can.
+    assertEquals(run(s"$mk (assert (distinct (mk a1) (mk a2) (mk a3) (mk a4) (mk a5)))"), List("unsat"))
+    assertEquals(run(s"$f (assert (distinct (f a1) (f a2) (f a3) (f a4) (f a5)))"), List("unsat"))
+    assertEquals(
+      run(s"$f (declare-const x Int) (assert (> x 0)) (assert (distinct (f a1) (f a2) (f a3) (f a4) (f a5)))"),
+      List("unsat")
+    )
+    assertEquals(run(s"$f (assert (distinct (f a1) (f a2) (f a3) (f a4)))"), List("sat"))
+
+  test("theory sharing gives an array equality first used in a lemma its witness"):
+    val constructor = "(declare-datatype D ((C (arr (Array Int Int)))))"
+    val function = "(declare-sort U 0) (declare-fun f ((Array Int Int)) U) (declare-const i Int)"
+    val cases = List(
+      (constructor, "C", "(store a 0 (select a 0))"),
+      (function, "f", "(store a i (select a i))"),
+      (s"$constructor (declare-const v Int) (assert (= v (select a 1)))", "C", "(store a 1 v)")
+    )
+    for
+      (setup, symbol, store) <- cases
+      (left, right) <- List(("a", store), (store, "a"))
+    do
+      val script = s"""
+        (declare-const a (Array Int Int))
+        $setup
+        (assert (not (= ($symbol $left) ($symbol $right))))
+        (check-sat)"""
+      assertEquals(Session.run(io.bovel.smtlib.Parser.parse(script)), List("unsat"), script)
+
+  test("shared array equalities get witnesses after push and remain valid after pop"):
+    val store = "(store a i (select a i))"
+    val script = s"""
+      (declare-sort U 0)
+      (declare-const a (Array Int Bool))
+      (declare-const i Int)
+      (declare-fun f ((Array Int Bool)) U)
+      (assert (select a 0))
+      (assert (select $store 0))
+      (check-sat)
+      (push 1)
+      (assert (not (= (f $store) (f a))))
+      (check-sat)
+      (pop 1)
+      (push 1)
+      (assert (not (= (f a) (f $store))))
+      (check-sat)
+      (pop 1)
+      (assert (not (= (f a) (f (store a 0 false)))))
+      (check-sat)"""
+    assertEquals(Session.run(io.bovel.smtlib.Parser.parse(script)), List("sat", "unsat", "unsat", "sat"))
+
+  test("store chains over the same base differ only at their write indices"):
+    val script = """
+      (declare-const a (Array Int (Array Bool Bool)))
+      (declare-const x (Array Bool Bool))
+      (declare-const y (Array Bool Bool))
+      (assert (select x true))
+      (assert (not (select y true)))
+      (push 1)
+      (assert (distinct (store (store a 0 x) 1 y) (store (store a 1 y) 0 x)))
+      (check-sat)
+      (pop 1)
+      (assert (distinct (store (store a 0 x) 1 y) (store (store a 0 x) 1 x)))
+      (check-sat)"""
+    assertEquals(Session.run(io.bovel.smtlib.Parser.parse(script)), List("unsat", "sat"))
+
+  test("an array equality shares reads that arrived in an earlier check"):
+    val script = """
+      (declare-const a (Array Int Int))
+      (declare-const b (Array Int Int))
+      (declare-const i Int)
+      (declare-const j Int)
+      (push 1)
+      (assert (<= i j))
+      (assert (<= j i))
+      (assert (distinct (select a i) (select b j)))
+      (check-sat)
+      (push 1)
+      (assert (= a b))
+      (check-sat)
+      (pop 1)
+      (check-sat)"""
+    assertEquals(Session.run(io.bovel.smtlib.Parser.parse(script)), List("sat", "unsat", "sat"))
+
   test("push and pop"):
     val s = Solver()
     s.assert(a === b)
@@ -77,6 +176,166 @@ class SolverTest extends munit.FunSuite:
     s.pop()
     assertEquals(s.solve().toString, "Sat")
     intercept[IllegalArgumentException](s.pop())
+
+  test("model-based arithmetic equates the numeric results of congruent applications"):
+    val s = Session(Solver(simplify = false))
+    assertEquals(
+      s.run("""
+        (declare-sort U 0)
+        (declare-const a U) (declare-const b U)
+        (declare-fun f (U) Int)
+        (assert (= a b))
+        (assert (= (f a) 0))
+        (assert (= (f b) 1))
+        (check-sat)
+      """),
+      List("unsat")
+    )
+
+  test("model-based arithmetic compares linear arguments and numerals with model output off"):
+    val s = Session(Solver(simplify = false))
+    assertEquals(
+      s.run("""
+        (declare-sort U 0)
+        (declare-const x Int)
+        (declare-fun f (Int) U)
+        (assert (= x 0))
+        (assert (distinct (f (+ x 1)) (f 1)))
+        (check-sat)
+      """),
+      List("unsat")
+    )
+    assert(!s.solver.produceModels)
+
+  test("model-based arithmetic checks nested calls with mixed Boolean and integer arguments"):
+    val s = Session(Solver(simplify = false), checkModels = true)
+    assertEquals(
+      s.run("""
+        (declare-const x Int) (declare-const y Int)
+        (declare-fun f (Int) Int)
+        (declare-fun p (Bool Int) Bool)
+        (assert (distinct x y))
+        (assert (= (f x) 7))
+        (assert (= (f y) 7))
+        (assert (p true (f x)))
+        (assert (not (p false (f y))))
+        (check-sat)
+        (push 1)
+        (assert (not (p true (f y))))
+        (check-sat)
+        (pop 1)
+        (check-sat)
+      """),
+      List("sat", "unsat", "sat")
+    )
+
+  test("model-based arithmetic can choose disequality and keep its definition across checks"):
+    val s = Session(Solver(simplify = false), checkModels = true)
+    assertEquals(
+      s.run("""
+        (declare-sort U 0)
+        (declare-const a Int) (declare-const b Int)
+        (declare-fun f (Int) U)
+        (assert (distinct (f a) (f b)))
+        (check-sat)
+        (push 1)
+        (assert (! (= a b) :named same))
+        (check-sat)
+        (get-unsat-core)
+        (pop 1)
+        (check-sat)
+      """),
+      List("sat", "unsat", "(same)", "sat")
+    )
+
+  test("model-based arithmetic encodes explicit equality before it reaches level zero"):
+    val s = Solver(simplify = false)
+    s.declare("a", Nil, Sort.Int)
+    s.declare("b", Nil, Sort.Int)
+    s.assert(a === b)
+    assertEquals(s.solve(), s.Result.Sat)
+    s.push()
+    s.assert(b === a)
+    s.assert(a <= Num(0))
+    s.assert(b >= Num(1))
+    assertEquals(s.solve(), s.Result.Unsat)
+    s.pop()
+    assertEquals(s.solve(), s.Result.Sat)
+
+  test("model-based arithmetic combines with an array introduced between checks"):
+    val s = Session(Solver(simplify = false))
+    assertEquals(
+      s.run("""
+        (declare-const x Int)
+        (assert (= x 0))
+        (check-sat)
+        (push 1)
+        (declare-const a (Array Int Int))
+        (assert (distinct (select (store a x 1) 0) 1))
+        (check-sat)
+        (pop 1)
+        (check-sat)
+      """),
+      List("sat", "unsat", "sat")
+    )
+
+  test("model-based arithmetic checks the undeclared integer terms of the Solver API"):
+    val s = Solver(simplify = false)
+    assertEquals(s.solve(), s.Result.Sat)
+    s.assert(a === b)
+    s.assert(a <= Num(0))
+    s.assert(b >= Num(1))
+    assertEquals(s.solve(), s.Result.Unsat)
+
+  test("an equality of undeclared terms decided before they are known as integers (issue 221)"):
+    // The first check decides `a = b` for good, as an equality of the e-graph only. Its arithmetic meaning,
+    // which arrives with `a ≤ 0`, has to reach the simplex all the same: as an atom's meaning it did not.
+    val s = Solver(simplify = false)
+    s.assert(a === b)
+    assertEquals(s.solve(), s.Result.Sat)
+    s.assert(a <= Num(0))
+    s.assert(b >= Num(1))
+    assertEquals(s.solve(), s.Result.Unsat)
+
+  test("model-based arithmetic compares the undeclared integer arguments of an undeclared function"):
+    val s = Solver(simplify = false)
+    s.assert(Not(fa(a) === fa(b)))
+    assertEquals(s.solve(), s.Result.Sat)
+    s.assert(a <= b)
+    s.assert(b <= a)
+    assertEquals(s.solve(), s.Result.Unsat)
+
+  test("model-based arithmetic compares integer arguments of a function into the reals"):
+    // `x` and `y` are equal in arithmetic only: the final check finds the two rows of `f`, and splits.
+    val s = Session(Solver(simplify = false), checkModels = true)
+    assertEquals(
+      s.run("""
+        (declare-const x Int) (declare-const y Int)
+        (declare-fun f (Int) Real)
+        (assert (<= x y)) (assert (<= y x))
+        (assert (distinct (f x) (f y)))
+        (check-sat)
+      """),
+      List("unsat")
+    )
+
+  test("model-based arithmetic finds two datatype values apart with equal integer fields"):
+    // Their values make the datatype's: equal fields are one value, against `x ≠ y`. The final check equates
+    // the fields, and congruence over the constructor finds `x = y`.
+    val s = Session(Solver(simplify = false), checkModels = true)
+    assertEquals(
+      s.run("""
+        (declare-datatypes ((Pair 0)) (((mk (f1 Int) (f2 Int)))))
+        (declare-const x Pair) (declare-const y Pair) (declare-const w Int)
+        (assert (not (= x y)))
+        (assert (= (f1 x) (f1 y)))
+        (assert (= (f2 x) 0))
+        (assert (= (+ (f2 y) w) 0))
+        (assert (<= w 0)) (assert (<= 0 w))
+        (check-sat)
+      """),
+      List("unsat")
+    )
 
   test("random formulas over predicates agree with brute force"):
     val rnd = scala.util.Random(9)
@@ -158,9 +417,33 @@ class SolverTest extends munit.FunSuite:
       s"only $simplifiedSomething simplified"
     ) // elimination applies in positive positions only
 
+  test("a term of a range of the integers lies in the range (issues 145 and 154)"):
+    val x = Const("x")
+    // A declared constant, from its declaration on and below every level: no `pop` takes the range back.
+    val s = Solver()
+    s.push()
+    s.declare("x", Nil, Sort.IntRange(0, 3))
+    s.assert(x >= Num(4))
+    assertEquals(s.solve(), s.Result.Unsat)
+    s.pop()
+    s.assert(x >= Num(3))
+    assertEquals(s.solve(), s.Result.Sat)
+    assertEquals(s.model().get.constants("x"), Num(3))
+    // An application, when the solver first meets it.
+    s.declare("f", List(Sort.Int), Sort.IntRange(0, 1))
+    s.push()
+    s.assert(App(Const("f"), List(x)) >= Num(2))
+    assertEquals(s.solve(), s.Result.Unsat)
+    s.pop()
+    // The range goes with the declaration: the same name at another sort is another constant.
+    s.undeclare("x")
+    s.declare("x", Nil, Sort.Int)
+    s.assert(x >= Num(4))
+    assertEquals(s.solve(), s.Result.Sat)
+
   test("unknown with a reason: the fuel, or the caller"):
     val s = Solver()
-    for i <- 0 until 12 do s.declare(s"p$i", Nil, "Bool")
+    for i <- 0 until 12 do s.declare(s"p$i", Nil, Sort.Bool)
     val ps = (0 until 12).map(i => Pred(Const(s"p$i"))).toList
     s.assert(Or(ps))
     for (a, i) <- ps.zipWithIndex; b <- ps.drop(i + 1) do s.assert(Or(List(Not(a), Not(b))))
@@ -179,8 +462,8 @@ class SolverTest extends munit.FunSuite:
     val xs = (0 until 48).map(i => Const(s"x$i")).toList
     def problem(): Solver =
       val s = Solver()
-      s.declare("f", List("Int"), "Int")
-      for i <- xs.indices do s.declare(s"x$i", Nil, "Int")
+      s.declare("f", List(Sort.Int), Sort.Int)
+      for i <- xs.indices do s.declare(s"x$i", Nil, Sort.Int)
       for (x, y) <- xs.zip(xs.tail :+ xs.head) do s.assert(Le(x, y))
       s.assert(Or(for (x, i) <- xs.zipWithIndex; y <- xs.drop(i + 1) yield fa(x) !== fa(y)))
       s

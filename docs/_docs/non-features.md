@@ -43,4 +43,8 @@ refused at the declaration, rather than read as uninterpreted sorts.
 - An assertion that still mentions a sort parameter, which the standard reads as one assertion per
   monomorphic sort of the context, is refused: a use of a polymorphic symbol must determine its
   instance; see [sort parameters](theories/sorts.md#sort-parameters).
+- A non-regular parametric datatype, one whose instance needs an instance of itself at a larger sort —
+  `(declare-datatype N (par (T) ((nnil) (ncons (h T) (t (N (Pair T T)))))))` — is refused: it has an
+  instance per such sort, without end, and each instance is a datatype of its own here; see
+  [sort parameters](theories/sorts.md#sort-parameters).
 - `check-sat-using`, z3's tactic form, is read as `check-sat`.

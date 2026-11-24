@@ -15,8 +15,8 @@ class BitVectorsTest extends munit.FunSuite:
 
   test("get-assertions shows the lowered stack"):
     val out = Session.run(Parser.parse(s"$decls (assert (bvult x y)) (get-assertions)"))
-    assert(out.last.contains("(<= x 255)"), out.last) // the range of a declared bit-vector
-    assert(out.last.contains("(<= (+ x 1) y)"), out.last) // bvult, lowered
+    // `bvult`, lowered, and nothing else: the range of a bit-vector is its sort's, not an assertion.
+    assertEquals(out.last, "((<= (+ x 1) y))")
 
   test("overflow, comparisons, extraction"):
     assert(sat(s"$decls (assert (= (bvadd x #xFF) #x00)) (assert (= x #x01)) (check-sat)"))

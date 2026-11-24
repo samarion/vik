@@ -1,0 +1,374 @@
+; The extension of CPC (cvc5's Cooperating Proof Calculus, `Cpc.eo` in cvc5's
+; proofs/eo/cpc) with the rules Vik's proofs need beyond it. Ethos checks a
+; proof of Vik with both signatures:
+;
+;   ethos --include=<cvc5>/proofs/eo/cpc/Cpc.eo --include=proofs/cpc/Vik.eo proof.cpc
+;
+; Each rule here has its soundness proved in proofs/lean, against Vik's
+; semantics of the SMT-LIB terms.
+
+; program: $vik_lower
+; args:
+; - t T: A term or formula of the script.
+; return: >
+;   Its lowering, as Vik's solver reads it (`LoweringCheck`, and `expect` in
+;   proofs/lean/Vik/Lower/Trace.lean): `xor` as the negation of `=`, `distinct`
+;   as the conjunction of the disequalities of its pairs, each connective and
+;   Boolean equality over the lowering of its arguments, and other terms as
+;   they are. Chains of `=` and `=>` need no case: CPC reads them as Vik
+;   lowers them.
+(program $vik_lower ((T Type) (x T) (y T) (a Bool) (b Bool) (c Bool) (xs Bool :list) (ys (@TList T) :list))
+  :signature (T) T
+  (
+  (($vik_lower (not a)) (not ($vik_lower a)))
+  (($vik_lower (and a xs)) (eo::cons and ($vik_lower a) ($vik_lower xs)))
+  (($vik_lower (or a xs)) (eo::cons or ($vik_lower a) ($vik_lower xs)))
+  (($vik_lower (=> a b)) (=> ($vik_lower a) ($vik_lower b)))
+  (($vik_lower (xor a b)) (not (= ($vik_lower a) ($vik_lower b))))
+  (($vik_lower (ite c x y)) (ite ($vik_lower c) ($vik_lower x) ($vik_lower y)))
+  (($vik_lower (= x y)) (= ($vik_lower x) ($vik_lower y)))
+  (($vik_lower (distinct ys)) ($vik_lower ($mk_distinct_elim (distinct ys))))
+  (($vik_lower x) x)
+  )
+)
+
+; rule: vik_lower
+; premises:
+; - F: An assertion of the script.
+; args:
+; - G Bool: The formula Vik lowers it to.
+; requires: That G is the lowering of F.
+; conclusion: G.
+(declare-rule vik_lower ((F Bool) (G Bool))
+  :premises (F)
+  :args (G)
+  :requires ((($vik_lower F) G))
+  :conclusion G
+)
+
+; ----------------------------------------------------------------------------
+; Reverse unit propagation
+
+; program: $vik_norm
+; args:
+; - l Bool: A literal.
+; return: l without its double negations.
+(program $vik_norm ((x Bool))
+  :signature (Bool) Bool
+  (
+  (($vik_norm (not (not x))) ($vik_norm x))
+  (($vik_norm x) x)
+  )
+)
+
+; program: $vik_neg
+; args:
+; - l Bool: A literal without double negations.
+; return: Its complement: `x` for `(not x)`, `(not x)` otherwise.
+(program $vik_neg ((x Bool))
+  :signature (Bool) Bool
+  (
+  (($vik_neg (not x)) x)
+  (($vik_neg x) (not x))
+  )
+)
+
+; program: $vik_norms
+; args:
+; - C Bool: An or-list of literals.
+; return: The list of the literals without their double negations.
+(program $vik_norms ((l Bool) (ls Bool :list))
+  :signature (Bool) Bool
+  (
+  (($vik_norms false) false)
+  (($vik_norms (or l ls)) (eo::cons or ($vik_norm l) ($vik_norms ls)))
+  )
+)
+
+; program: $vik_clause
+; args:
+; - C Bool: A clause as CPC writes it: false, an or-list, or one literal.
+; return: The clause as an or-list.
+(program $vik_clause ((l Bool) (ls Bool :list) (C Bool))
+  :signature (Bool) Bool
+  (
+  (($vik_clause false) false)
+  (($vik_clause (or l ls)) (or l ls))
+  (($vik_clause C) (eo::cons or C false))
+  )
+)
+
+; program: $vik_in
+; args:
+; - l Bool: A literal without double negations.
+; - A Bool: The or-list of the literals that are false, without double negations.
+; return: Whether l is false.
+(define $vik_in ((l Bool) (A Bool)) (eo::not (eo::is_neg (eo::list_find or A l))))
+
+; program: $vik_open
+; args:
+; - C Bool: A clause, as an or-list.
+; - A Bool: The or-list of the literals that are false.
+; return: >
+;   true when a literal of C is true, otherwise the or-list of its literals
+;   that are not false.
+(program $vik_open ((l Bool) (ls Bool :list) (A Bool))
+  :signature (Bool Bool) Bool
+  (
+  (($vik_open false A) false)
+  (($vik_open (or l ls) A)
+    ; A literal false first: A holds a literal and its complement only when
+    ; the clause derived is a tautology, which needs no premise.
+    (eo::define ((m ($vik_norm l)))
+    (eo::define ((rest ($vik_open ls A)))
+    (eo::ite (eo::eq rest true)
+      true
+      (eo::ite ($vik_in m A)
+        rest
+        (eo::ite ($vik_in ($vik_neg m) A) true (eo::cons or m rest)))))))
+  )
+)
+
+; program: $vik_propagate
+; args:
+; - Cs Bool: The and-list of the clauses left, in order.
+; - A Bool: The or-list of the literals that are false.
+; return: >
+;   Whether unit propagation over Cs, in order, from A, reaches a clause whose
+;   literals are all false. Each clause either has a true literal, has all its
+;   literals false (the conflict), has one literal left (which becomes true),
+;   or is passed over. A clause that is itself a literal already false is a
+;   conflict too, and a clause that is an or-list also holds as a literal.
+(program $vik_propagate ((C Bool) (Cs Bool :list) (A Bool))
+  :signature (Bool Bool) Bool
+  (
+  (($vik_propagate true A) false)
+  (($vik_propagate (and C Cs) A)
+    (eo::ite ($vik_in ($vik_norm C) A)
+      true
+      (eo::define ((L ($vik_clause C)))
+      ; An or-list proved is also a literal that holds.
+      (eo::define ((A2 (eo::ite (eo::eq L C) (eo::cons or ($vik_neg ($vik_norm C)) A) A)))
+      (eo::define ((open ($vik_open L A2)))
+        (eo::ite (eo::eq open true)
+          ($vik_propagate Cs A2)
+          (eo::ite (eo::eq open false)
+            true
+            (eo::ite (eo::eq (eo::list_len or open) 1)
+              ($vik_propagate Cs (eo::cons or ($vik_neg (eo::list_nth or open 0)) A2))
+              ($vik_propagate Cs A2)))))))))
+  )
+)
+
+; program: $vik_rup
+; args:
+; - Cs Bool: The and-list of the premise clauses, in the order they propagate.
+; - D Bool: The clause derived.
+; return: >
+;   Whether D is a reverse unit propagation consequence of Cs: propagation from
+;   the negation of D's literals (and of D itself, when D is an or-list) reaches
+;   a conflict.
+(program $vik_rup ((Cs Bool) (D Bool))
+  :signature (Bool Bool) Bool
+  (
+  (($vik_rup Cs D)
+    (eo::define ((L ($vik_clause D)))
+      ($vik_propagate Cs ($vik_norms (eo::ite (eo::eq L D) (eo::cons or D L) L)))))
+  )
+)
+
+; rule: vik_rup
+; premises:
+; - Cs [:list]: The clauses that propagate, in order.
+; args:
+; - D Bool: The clause derived.
+; requires: That D follows from Cs by reverse unit propagation.
+; conclusion: D.
+; note: >
+;   It stands for the chain of resolutions that conflict analysis finds, which
+;   vik/src/main/scala/io/bovel/vik/Cpc.scala writes out in plain CPC
+;   on request.
+(declare-rule vik_rup ((Cs Bool) (D Bool))
+  :premise-list Cs and
+  :args (D)
+  :requires ((($vik_rup Cs D) true))
+  :conclusion D
+)
+
+; ----------------------------------------------------------------------------
+; Lemmas of uninterpreted functions
+
+; The steps of an equality proof under the hypotheses of a lemma, each
+; deriving an equality from the hypotheses and the equalities before it, by
+; their index from 0.
+(declare-const VikStep Type)
+; (= t t).
+(declare-parameterized-const vik.refl ((T Type :implicit)) (-> T VikStep))
+; The hypothesis of the i-th literal of the lemma, the literal's negation: an
+; equality as it is, `(= x false)` for `(not x)`, `(= x true)` for another x.
+(declare-const vik.given (-> Int VikStep))
+; (= b a) from step j, (= a b).
+(declare-const vik.symm (-> Int VikStep))
+; (= a c) from steps j, (= a b), and k, (= b c).
+(declare-const vik.trans (-> Int Int VikStep))
+; (= (f a1 ... an) (g b1 ... bn)) from step j, (= f g), and the steps of the
+; list, (= ai bi).
+(declare-const vik.cong (-> Int @List VikStep))
+
+; program: $vik_hyps
+; args:
+; - C Bool: The or-list of a lemma's literals.
+; return: The @list of their negations, without double negations.
+(program $vik_hyps ((l Bool) (ls Bool :list))
+  :signature (Bool) @List
+  (
+  (($vik_hyps false) @list.nil)
+  (($vik_hyps (or l ls)) (eo::cons @list ($vik_neg ($vik_norm l)) ($vik_hyps ls)))
+  )
+)
+
+; program: $vik_given
+; args:
+; - h Bool: A hypothesis.
+; return: The equality it gives.
+(program $vik_given ((T Type) (a T) (b T) (x Bool))
+  :signature (Bool) Bool
+  (
+  (($vik_given (= a b)) (= a b))
+  (($vik_given (not x)) (= x false))
+  (($vik_given x) (= x true))
+  )
+)
+
+(program $vik_symm ((T Type) (a T) (b T))
+  :signature (Bool) Bool
+  (
+  (($vik_symm (= a b)) (= b a))
+  )
+)
+
+(program $vik_trans ((T Type) (a T) (b T) (c T))
+  :signature (Bool Bool) Bool
+  (
+  (($vik_trans (= a b) (= b c)) (= a c))
+  )
+)
+
+; program: $vik_cong
+; args:
+; - e Bool: (= f g).
+; - es @List: The equalities of the arguments, (= ai bi).
+; return: (= (f a1 ... an) (g b1 ... bn)).
+(program $vik_cong ((U Type) (T Type) (f (-> U T)) (g (-> U T)) (a U) (b U) (es @List :list) (e Bool))
+  :signature (Bool @List) Bool
+  (
+  (($vik_cong (= f g) (@list (= a b) es)) ($vik_cong (= (f a) (g b)) es))
+  (($vik_cong e @list.nil) e)
+  )
+)
+
+; program: $vik_at
+; args:
+; - R @List: The equalities derived so far, the last first.
+; - n Int: How many.
+; - j Int: The index of one, from the first.
+; return: That equality.
+(define $vik_at ((R @List) (n Int) (j Int)) (eo::list_nth @list R (eo::add n (eo::neg j) -1)))
+
+; program: $vik_ats
+; args:
+; - R @List, n Int: As for $vik_at.
+; - js @List: Indices.
+; return: The @list of their equalities.
+(program $vik_ats ((R @List) (n Int) (j Int) (js @List :list))
+  :signature (@List Int @List) @List
+  (
+  (($vik_ats R n @list.nil) @list.nil)
+  (($vik_ats R n (@list j js)) (eo::cons @list ($vik_at R n j) ($vik_ats R n js)))
+  )
+)
+
+; program: $vik_step
+; args:
+; - s VikStep: A step.
+; - R @List, n Int: The equalities so far, as for $vik_at.
+; - H @List: The hypotheses.
+; return: The equality the step derives.
+(program $vik_step ((T Type) (t T) (i Int) (j Int) (k Int) (js @List) (R @List) (n Int) (H @List))
+  :signature (VikStep @List Int @List) Bool
+  (
+  (($vik_step (vik.refl t) R n H) (= t t))
+  (($vik_step (vik.given i) R n H) ($vik_given (eo::list_nth @list H i)))
+  (($vik_step (vik.symm j) R n H) ($vik_symm ($vik_at R n j)))
+  (($vik_step (vik.trans j k) R n H) ($vik_trans ($vik_at R n j) ($vik_at R n k)))
+  (($vik_step (vik.cong j js) R n H) ($vik_cong ($vik_at R n j) ($vik_ats R n js)))
+  )
+)
+
+; program: $vik_steps
+; args:
+; - S @List: The steps left.
+; - R @List, n Int: The equalities so far, as for $vik_at.
+; - H @List: The hypotheses.
+; return: The equalities of all the steps, the last first.
+(program $vik_steps ((s VikStep) (S @List :list) (R @List) (n Int) (H @List))
+  :signature (@List @List Int @List) @List
+  (
+  (($vik_steps @list.nil R n H) R)
+  (($vik_steps (@list s S) R n H)
+    ($vik_steps S (eo::cons @list ($vik_step s R n H) R) (eo::add n 1) H))
+  )
+)
+
+(define $vik_has ((H @List) (h Bool)) (eo::not (eo::is_neg (eo::list_find @list H h))))
+
+; program: $vik_clash
+; args:
+; - e Bool: An equality.
+; - H @List: The hypotheses.
+; return: >
+;   Whether e contradicts them: it is (= true false), its negation is a
+;   hypothesis, or it makes a Boolean term true (false) whose negation (itself)
+;   is a hypothesis.
+(program $vik_clash ((T Type) (a T) (b T) (x Bool) (H @List))
+  :signature (Bool @List) Bool
+  (
+  (($vik_clash (= true false) H) true)
+  (($vik_clash (= false true) H) true)
+  (($vik_clash (= x true) H) ($vik_has H (not x)))
+  (($vik_clash (= true x) H) ($vik_has H (not x)))
+  (($vik_clash (= x false) H) ($vik_has H ($vik_norm x)))
+  (($vik_clash (= false x) H) ($vik_has H ($vik_norm x)))
+  (($vik_clash (= a b) H) (eo::or ($vik_has H (not (= a b))) ($vik_has H (not (= b a)))))
+  )
+)
+
+; program: $vik_uf
+; args:
+; - D Bool: A lemma, as a clause.
+; - S @List: The steps of an equality proof under the negations of its literals.
+; return: Whether the last step contradicts them.
+(program $vik_uf ((D Bool) (S @List))
+  :signature (Bool @List) Bool
+  (
+  (($vik_uf D S)
+    (eo::define ((H ($vik_hyps ($vik_clause D))))
+      ($vik_clash (eo::list_nth @list ($vik_steps S @list.nil 0 H) 0) H)))
+  )
+)
+
+; rule: vik_uf
+; args:
+; - D Bool: A lemma of uninterpreted functions, as a clause.
+; - S @List: The steps of an equality proof from the negations of its literals.
+; requires: That the proof derives an equality that contradicts them.
+; conclusion: D.
+; note: >
+;   It stands for a scope over the negations of D's literals in which the
+;   steps are refl, symm, trans, cong and ho_cong, which Cpc.scala writes out in
+;   plain CPC on request.
+(declare-rule vik_uf ((D Bool) (S @List))
+  :args (D S)
+  :requires ((($vik_uf D S) true))
+  :conclusion D
+)

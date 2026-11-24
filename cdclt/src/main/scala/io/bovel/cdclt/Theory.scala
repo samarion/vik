@@ -37,6 +37,12 @@ trait Theory:
    */
   def explain(lit: Lit): ArrayBuffer[Lit]
 
+  /** The theory's account of its last conflict, or of the explanation it just
+   *  gave, for a [[Proof]] — asked right after either, before the theory is
+   *  told anything else; `null` when it gives none.
+   */
+  def certificate(): AnyRef | Null = null
+
   /** Opens a level: [[pop]] undoes the assertions done after this call. */
   def push(): Unit
 

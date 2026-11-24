@@ -1,0 +1,10 @@
+; From cvc5: regress0/datatypes/pair-bool-bool.cvc.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; logic: QF_DT, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_DT)
+(set-option :incremental false)
+(declare-datatypes ((pair 2)) ((par (T1 T2)((mkpair (first T1) (second T2))))))
+(declare-fun x () (pair Bool Bool))
+(assert (= x (mkpair true true)))
+(set-info :status sat)
+(check-sat)

@@ -1,0 +1,8 @@
+; From cvc5: regress0/aufbv/try5_small_difret_functions_wp_su.set_char_quoting.il.wp.delta01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_ABV, the smallest the script fits, for QF_AUFBV (prune logic)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_ABV)
+(declare-fun R_ESP_1_58 () (_ BitVec 32))
+(declare-fun mem_35_197 () (Array (_ BitVec 32) (_ BitVec 8)))
+(check-sat-assuming ( (let ((_let_0 (bvadd (_ bv1 32) R_ESP_1_58))) (let ((_let_1 (store mem_35_197 _let_0 (_ bv0 8)))) (let ((_let_2 (store (store _let_1 (bvadd (_ bv1 32) _let_0) (_ bv0 8)) (_ bv0 32) (_ bv0 8)))) (let ((_let_3 (bvadd (_ bv1 32) (concat (_ bv0 24) (select _let_1 R_ESP_1_58))))) (= (_ bv0 32) (concat (_ bv0 24) (select (store _let_2 _let_3 ((_ extract 7 0) (bvxor (_ bv1 32) (concat (_ bv0 24) (select _let_2 _let_3))))) (_ bv0 32)))))))) ))

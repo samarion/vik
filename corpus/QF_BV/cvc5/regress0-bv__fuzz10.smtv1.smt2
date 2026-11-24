@@ -1,0 +1,6 @@
+; From cvc5: regress0/bv/fuzz10.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_BV)
+(declare-fun v0 () (_ BitVec 1))
+(check-sat-assuming ( (bvsgt v0 v0) ))

@@ -29,13 +29,20 @@ object Solver:
    *  it was asserted with, or the bounds it was derived from (`premises`, see
    *  `propagateBounds`). The reasons of a derived bound, the union of those of
    *  its premises, are collected only when a conflict needs them: derivations
-   *  are many, conflicts few.
+   *  are many, conflicts few. With [[Solver.proofs]], `certificate` derives the
+   *  bound (see [[Certificate]]).
    */
   /** A count shared by the bounds of one solver: see [[Solver.reasonWork]]. */
   private final class Counter:
     var n = 0L
 
-  private final class Bound(val value: Delta, val reason: Int, val premises: Array[Bound], work: Counter):
+  private final class Bound(
+      val value: Delta,
+      val reason: Int,
+      val premises: Array[Bound],
+      work: Counter,
+      val certificate: Certificate | Null = null
+  ):
     lazy val reasons: Set[Int] = // once per bound: a conflict may ask again and again along a long derivation
       val literals = Set.newBuilder[Int]
       val seen = scala.collection.mutable.HashSet.empty[Bound] // premises are shared: a graph, not a tree
@@ -61,6 +68,7 @@ object Solver:
       reason: Int,
       because: Set[Int], // the reasons of the disequality the branch decides, if any: part of its explanation
       var left: Set[Int] | Null = null,
+      var leftCertificate: Certificate | Null = null,
       strict: Boolean = false, // a real disequality splits into strict sides
       up: Boolean = false // the upper side `x ≥ ceil` first, toward zero
   )
@@ -71,9 +79,48 @@ object Solver:
   val equationWork = 100000
 
   /** An integer equation `Σ coefs = constant` of [[Solver.integerEquations]],
-   *  with the reasons of the bounds it was combined from.
+   *  with the reasons of the bounds it was combined from, and with
+   *  [[Solver.proofs]], the factors of the equations `x = c` of the variables
+   *  the bounds fix that it is the combination of (the rows are identities over
+   *  the unknowns, and the definitions of fresh variables a change of
+   *  variables).
    */
-  private final class Equation(val coefs: HashMap[Int, BigInt], var constant: BigInt, var reasons: Set[Int])
+  private final class Equation(
+      val coefs: HashMap[Int, BigInt],
+      var constant: BigInt,
+      var reasons: Set[Int],
+      val factors: HashMap[Var, Rational] | Null = null
+  ):
+    /** Subtracts `a` times `by`, an equation `y + … = c`. */
+    def subtract(by: Equation, a: BigInt): Unit =
+      for (z, b) <- by.coefs do
+        val sum = coefs.getOrElse(z, BigInt(0)) - a * b
+        if sum == 0 then coefs -= z else coefs(z) = sum
+      constant -= a * by.constant
+      reasons ++= by.reasons
+      if factors != null then
+        for (z, f) <- by.factors.nn do
+          val sum = factors.getOrElse(z, Rational.zero) - f * Rational(a)
+          if sum.isZero then factors -= z else factors(z) = sum
+
+    def copy(): Equation = Equation(coefs.clone(), constant, reasons, if factors == null then null else factors.clone())
+
+  /** `x ≡ c (mod g)`: the values the integer equations in force leave to `x`
+   *  ([[Solver.integerEquations]]), with the bounds those equations hold by, as
+   *  the premises of the bounds moved onto the lattice. With [[Solver.proofs]],
+   *  `below` and `above` derive the two sides of the equation `m·x + Σ a·z = k`
+   *  the lattice comes from, `≤ k` and `≥ k`, and `lambda` is the factor that
+   *  takes `m` to `1` modulo `g`, `lambda·k` being `c` modulo `g`.
+   */
+  private final class Lattice(
+      val x: Int,
+      val c: BigInt,
+      val g: BigInt,
+      val premises: Array[Bound],
+      val below: Certificate | Null = null,
+      val above: Certificate | Null = null,
+      val lambda: Rational = Rational.zero
+  )
 
   /** A set of variables with its smallest at hand: a binary min-heap. */
   private final class VarHeap:
@@ -266,6 +313,44 @@ final class Solver:
 
   def numVars: Int = values.length
 
+  /** Whether the solver gives a [[Certificate]] of each `Unsat`
+   *  ([[conflictCertificate]]); set before asserting anything.
+   */
+  var proofs: Boolean = false
+
+  /** With [[proofs]], the certificate of the last `Unsat`. */
+  var conflictCertificate: Certificate | Null = null
+
+  /** The expression of each slack (see [[newSlack]]), `null` for an unknown. */
+  private val definitions = ArrayBuffer.empty[Array[(BigInt, Var)] | Null]
+
+  /** The expression `x` stands for, over the unknowns ([[newVar]]): `x` itself
+   *  for an unknown.
+   */
+  def form(x: Var): Map[Var, Rational] =
+    val d = definitions(x)
+    if d == null then Map(x -> Rational.one)
+    else
+      val out = HashMap.empty[Var, Rational]
+      for (a, y) <- d; (u, b) <- form(y) do
+        val sum = out.getOrElse(u, Rational.zero) + b * Rational(a)
+        if sum.isZero then out.remove(u) else out(u) = sum
+      out.toMap
+
+  /** An `Unsat` with its certificate, when proofs are on (`null` when there is
+   *  none: the search goes on the same, and the proof is refused).
+   */
+  private inline def unsat(reasons: Set[Int], inline certificate: Certificate | Null): Result =
+    if proofs then conflictCertificate = certificate
+    Result.Unsat(reasons)
+
+  /** The combination of the certificates of `bounds` with the given factors
+   *  (those that are zero left out).
+   */
+  private def comb(factors: Array[Rational], bounds: Array[Certificate]): Certificate =
+    val keep = factors.indices.filter(i => !factors(i).isZero)
+    Certificate.Comb(keep.map(factors(_)).toArray, keep.map(bounds(_)).toArray)
+
   /** A new variable, unbounded, non-basic, valued 0; integer unless said
    *  otherwise.
    */
@@ -277,6 +362,7 @@ final class Solver:
     rows += null
     columns += Column()
     isSlack += false
+    definitions += null
     scale += 1
     isInt += integer
     if integer then anyInt = true else anyReal = true
@@ -292,6 +378,7 @@ final class Solver:
     val g = if integer then terms.map((a, _) => a.abs).reduce(_ gcd _) else BigInt(1)
     val s = newVar(integer)
     isSlack(s) = true
+    definitions(s) = terms.toArray
     scale(s) = g
     val row = Row()
     for (a, x) <- terms do
@@ -354,6 +441,13 @@ final class Solver:
    */
   def realValue(x: Var): Rational = values(x) + (if anyReal then valuesD(x) else Rational.zero) * delta0()
 
+  /** [[realValue]] for many variables: the δ is worked out once, for the
+   *  solution as it stands.
+   */
+  def realValues(): Var => Rational =
+    val delta = if anyReal then delta0() else Rational.zero
+    x => if anyReal then values(x) + valuesD(x) * delta else values(x)
+
   /** A δ that satisfies every asserted bound strictly enough: for each bound
    *  whose infinitesimal part demands room, the rational gap divided by the
    *  infinitesimal gap bounds δ from above; 1 works when nothing does.
@@ -389,7 +483,11 @@ final class Solver:
       if isInt(x) then Delta(Rational(floorDiv(if strict then c - 1 else c, scale(x))))
       else if strict then Delta.strictUpper(Rational(c))
       else Delta(Rational(c))
-    assertBound(x, Bound(value, reason, Array.empty, reasons), true)
+    assertBound(
+      x,
+      Bound(value, reason, Array.empty, reasons, if proofs then hyp(reason, x, c, strict, true) else null),
+      true
+    )
 
   /** Asserts `x ≥ c` for `reason`, as [[assertUpper]]. */
   def assertLower(x: Var, c: BigInt, reason: Int): Result = assertLower(x, c, false, reason)
@@ -400,7 +498,20 @@ final class Solver:
       if isInt(x) then Delta(Rational(-floorDiv(-(if strict then c + 1 else c), scale(x))))
       else if strict then Delta.strictLower(Rational(c))
       else Delta(Rational(c))
-    assertBound(x, Bound(value, reason, Array.empty, reasons), false)
+    assertBound(
+      x,
+      Bound(value, reason, Array.empty, reasons, if proofs then hyp(reason, x, c, strict, false) else null),
+      false
+    )
+
+  /** The certificate of an asserted bound: the hypothesis, on the expression
+   *  `x` stands for, divided by its gcd (the bound is on `x`), and rounded when
+   *  `x` is an integer.
+   */
+  private def hyp(reason: Int, x: Var, c: BigInt, strict: Boolean, upper: Boolean): Certificate =
+    val h = Certificate.Hyp(reason, x, c, strict, upper)
+    val scaled = if scale(x) == 1 then h else Certificate.Comb(Array(Rational(1, scale(x))), Array(h))
+    if isInt(x) then Certificate.Round(scaled) else scaled
 
   /** Asserts `x ≠ c` (for a slack, that its combination is not `c`): a
    *  disequality is decided by [[check]], which branches on `x ≤ c − 1` or
@@ -414,7 +525,22 @@ final class Solver:
       val v = Delta(Rational(c / (if isInt(x) then scale(x) else BigInt(1))))
       val l = lower(x)
       val u = upper(x)
-      if l != null && u != null && l.value == v && u.value == v then Result.Unsat(l.reasons ++ u.reasons + reason)
+      if l != null && u != null && l.value == v && u.value == v then
+        unsat(
+          l.reasons ++ u.reasons + reason, {
+            // A split of the disequality, each side against one of the bounds.
+            val s = if isInt(x) then scale(x) else BigInt(1)
+            val strict = !isInt(x)
+            val (floor, ceil) = if strict then (c, c) else (c - s, c + s)
+            branches += 1
+            val r = -branches
+            def side(bound: Bound, upper: Boolean, at: BigInt) = Certificate.Comb(
+              Array(Rational.one, Rational(scale(x))),
+              Array(Certificate.Hyp(r, x, at, strict, upper), bound.certificate.nn)
+            )
+            Certificate.Split(r, x, floor, ceil, side(l, true, floor), side(u, false, ceil), reason, c, strict)
+          }
+        )
       else
         distinct += ((x, c, reason))
         Result.Sat
@@ -440,7 +566,7 @@ final class Solver:
     val opposite = if isUpper then lower(x) else upper(x)
     if same != null && (if isUpper then same.value <= c else same.value >= c) then return Result.Sat // not tighter
     if opposite != null && (if isUpper then c < opposite.value else c > opposite.value) then
-      return Result.Unsat(bound.reasons ++ opposite.reasons)
+      return unsat(bound.reasons ++ opposite.reasons, pair(bound, opposite.nn))
     if levels.nonEmpty then trail += Undo(x, isUpper, same)
     if isUpper then upper(x) = bound else lower(x) = bound
     boundMagnitude = boundMagnitude.max(c.r.num.abs)
@@ -449,6 +575,21 @@ final class Solver:
     suspect(x)
     tightened += x
     Result.Sat
+
+  /** The certificate of two opposite bounds of a variable that cross. */
+  private def pair(a: Bound, b: Bound): Certificate =
+    Certificate.Comb(Array(Rational.one, Rational.one), Array(a.certificate.nn, b.certificate.nn))
+
+  /** The certificate of the bound or its opposite on `x` that decides `x ≤ c`
+   *  (see [[decidesUpper]]) against the hypothesis that it does not: `reason`,
+   *  `x > c` when `holds`, `x ≤ c` otherwise.
+   */
+  def decidedCertificate(x: Var, c: BigInt, holds: Boolean, reason: Int): Certificate =
+    val bound = (if holds then upper(x) else lower(x)).nn
+    Certificate.Comb(
+      Array(Rational(scale(x)), Rational.one),
+      Array(bound.certificate.nn, Certificate.Hyp(reason, x, c, holds, !holds))
+    )
 
   /** Derives bounds from the rows, as Dutertre and de Moura's bound
    *  propagation: the bounds of the variables of a row bound its basic
@@ -558,13 +699,31 @@ final class Solver:
         k += 1
       if extra != null then out(row.size) = extra
       out
-    def derive(x: Var, c: Delta, premises: Array[Bound], isUpper: Boolean): Unit =
+    // The factors of the premises for a bound of `b`, then for one of the `j`-th variable (see `premises`): the
+    // absolute coefficients of the row, the variable's own bound left out, the bound of `b` last, all divided by
+    // the variable's coefficient.
+    def factors(j: Int): Array[Rational] =
+      val n = if j < 0 then row.size else row.size + 1
+      val out = new Array[Rational](n)
+      val by = if j < 0 then Rational.one else row.coefAt(j).abs
+      var k = 0
+      while k < row.size do
+        out(k) = if k == j then Rational.zero else row.coefAt(k).abs / by
+        k += 1
+      if j >= 0 then out(row.size) = Rational.one / by
+      out
+    def derive(x: Var, c: Delta, premises: Array[Bound], isUpper: Boolean, j: Int): Unit =
       val rounded = if isInt(x) then Delta(Rational(if isUpper then c.floor else c.ceil)) else c
-      assertBound(x, Bound(rounded, -1, premises, reasons), isUpper) match
+      val certificate =
+        if !proofs then null
+        else
+          val combined = comb(factors(j), premises.map(_.certificate.nn))
+          if isInt(x) then Certificate.Round(combined) else combined
+      assertBound(x, Bound(rounded, -1, premises, reasons, certificate), isUpper) match
         case Result.Sat => ()
         case unsat => break(unsat)
-    if hasLow && (lower(b) == null || low > lower(b).nn.value) then derive(b, low, premises(true, null), false)
-    if hasHigh && (upper(b) == null || high < upper(b).nn.value) then derive(b, high, premises(false, null), true)
+    if hasLow && (lower(b) == null || low > lower(b).nn.value) then derive(b, low, premises(true, null), false, -1)
+    if hasHigh && (upper(b) == null || high < upper(b).nn.value) then derive(b, high, premises(false, null), true, -1)
     // a × x_j = b − (the rest of the row), bounded by a bound of b and the lowest or highest value of the rest.
     val u = upper(b)
     val l = lower(b)
@@ -589,8 +748,8 @@ final class Solver:
         if upperRoom != null then withUpper = premises(true, u)
         if lowerRoom != null then withLower = premises(false, l)
       // a × x_j ≤ u − (low − a × forLow), and a × x_j ≥ l − (high − a × forHigh)
-      if fromUpper then derive(j, (upperRoom.nn + forLow.nn.value * a) / a, withUpper.nn, a.signum > 0)
-      if fromLower then derive(j, (forHigh.nn.value * a - lowerRoom.nn) / a, withLower.nn, a.signum < 0)
+      if fromUpper then derive(j, (upperRoom.nn + forLow.nn.value * a) / a, withUpper.nn, a.signum > 0, i)
+      if fromLower then derive(j, (forHigh.nn.value * a - lowerRoom.nn) / a, withLower.nn, a.signum < 0, i)
       i += 1
     Result.Sat
 
@@ -816,27 +975,84 @@ final class Solver:
       past
     val open = ArrayBuffer.empty[Branch]
     var equationsChecked = !equationCheck
+    // What the equations leave to the bounded unknowns, once branch and bound has slid: for the rest of
+    // the check, since they hold by asserted bounds alone.
+    val lattices = ArrayBuffer.empty[Solver.Lattice]
+
+    /** Moves the bounds of each variable with a lattice onto it: `x ≥ 1` with
+     *  `x ≡ 0 (mod 4)` is `x ≥ 4`. A bound a branch sets is moved inside the
+     *  branch, and goes with it. A bound that moved is in `tightened`.
+     */
+    def align(): Result = boundary:
+      for lattice <- lattices do
+        val l = lower(lattice.x)
+        if l != null then
+          val v = l.value.ceil
+          val on = v + (lattice.c - v).mod(lattice.g)
+          if on > v then
+            val certificate = if proofs then onLattice(lattice, l, false) else null
+            assertBound(
+              lattice.x,
+              Bound(Delta(Rational(on)), -1, lattice.premises :+ l, reasons, certificate),
+              false
+            ) match
+              case Result.Sat => ()
+              case unsat => break(unsat)
+        val u = upper(lattice.x)
+        if u != null then
+          val v = u.value.floor
+          val on = v - (v - lattice.c).mod(lattice.g)
+          if on < v then
+            val certificate = if proofs then onLattice(lattice, u, true) else null
+            assertBound(
+              lattice.x,
+              Bound(Delta(Rational(on)), -1, lattice.premises :+ u, reasons, certificate),
+              true
+            ) match
+              case Result.Sat => ()
+              case unsat => break(unsat)
+      Result.Sat
 
     /** Decides the relaxation and splits on the first fractional unknown, or
      *  else on the first violated disequality.
      */
-    def step(): Result | Branch = relaxationAndWindows() match
+    def step(sweep: Boolean): Result | Branch = relaxationAndWindows() match
       case Result.Sat =>
         var x = 0
         while x < numVars && (isSlack(x) || !isInt(x) || deltaValue(x).isInteger) do x += 1
-        if x < numVars then
+        // Inside a branch, what the rows say now before branching again (see `propagateRows`): the bounds it
+        // finds go when the branch does. Outside of one they would stay after the check, and the search went
+        // another, longer way for them on the sessions measured.
+        val swept = if sweep && x < numVars then propagateRows() else Result.Sat
+        val aligned = if swept == Result.Sat && lattices.nonEmpty then align() else swept
+        if aligned != Result.Sat then
+          tightened.clear()
+          aligned
+        else if tightened.nonEmpty then step(false)
+        else if x < numVars then
           // A second branch on an unknown is branch and bound sliding along it, maybe without end:
-          // the equations alone may have no integer solution.
+          // the equations alone may have no integer solution, or leave a bounded unknown fewer values.
           val sliding = !equationsChecked && open.exists(_.x == x)
-          val refuted = if sliding then integerEquations() else Result.Sat
+          val refuted = if sliding then integerEquations(lattices) else Result.Sat
           equationsChecked ||= sliding && refuted == Result.Sat // a refutation is found again on the other side
           if refuted != Result.Sat then refuted
+          else if sliding && lattices.nonEmpty then step(false) // the lattices found: onto them first
           else
             branches += 1
             val v = deltaValue(x)
-            // The side toward zero first: flooring a negative value first can dive
-            // away from zero without end along an unbounded direction.
-            Branch(x, v.floor, v.ceil, -branches, Set.empty, up = v.floor.signum < 0)
+            val l = lower(x)
+            val u = upper(x)
+            if open.count(_.x == x) >= 16 && l != null && u != null then
+              // Many open branches on one bounded unknown: sliding one unit at a time along it can take as
+              // many steps as its range is wide (a bit-vector's 2^32), so halve the range instead. Not from
+              // the second branch on: the first ones stay around the relaxation's value, where the integer
+              // solutions of a small problem are.
+              val mid = (l.value.floor + u.value.ceil) >> 1
+              Branch(x, mid, mid + 1, -branches, Set.empty, up = v.ceil > mid)
+            else
+              // The side toward zero first: flooring a negative value first can dive
+              // away from zero without end along an unbounded direction.
+              Branch(x, v.floor, v.ceil, -branches, Set.empty, up = v.floor.signum < 0)
         else
           distinct.find((x, c, _) =>
             values(x) * Rational(if isInt(x) then scale(x) else BigInt(1)) == Rational(c)
@@ -854,15 +1070,16 @@ final class Solver:
       case unsat => unsat
     def side(branch: Branch, up: Boolean): Result | Branch =
       val c = if up then branch.ceil else branch.floor
-      if pastBox(c) then Result.Unsat(Set.empty) // no solution past the box
+      // No solution past the box, which has no certificate: with proofs, the proof is refused.
+      if pastBox(c) then unsat(Set.empty, null)
       else
         val asserted =
           if up then assertLower(branch.x, c, branch.strict, branch.reason)
           else assertUpper(branch.x, c, branch.strict, branch.reason)
         asserted match
-          case Result.Sat => step()
+          case Result.Sat => step(open.nonEmpty)
           case unsat => unsat
-    var current: Result | Branch = step()
+    var current: Result | Branch = step(false)
     while true do
       current match
         case Result.Sat =>
@@ -879,12 +1096,34 @@ final class Solver:
           pop()
           if branch.left == null then // the left side failed: try the right one
             branch.left = reasons
+            if proofs then branch.leftCertificate = conflictCertificate
             push()
             current = side(branch, !branch.up)
           else // both sides failed
             open.remove(open.length - 1)
             if open.isEmpty && splitOnDemand && branch.because.isEmpty then failedSplits += ((branch.x, branch.floor))
-            current = Result.Unsat((branch.left.nn ++ reasons) - branch.reason ++ branch.because)
+            current = unsat(
+              (branch.left.nn ++ reasons) - branch.reason ++ branch.because, {
+                val first = branch.leftCertificate
+                val second = conflictCertificate
+                val (low, high) = if branch.up then (second, first) else (first, second)
+                val except = if branch.because.isEmpty then -1 else branch.because.head
+                val at = (branch.floor + branch.ceil) / 2
+                if low == null || high == null then null
+                else
+                  Certificate.Split(
+                    branch.reason,
+                    branch.x,
+                    branch.floor,
+                    branch.ceil,
+                    low,
+                    high,
+                    except,
+                    at,
+                    branch.strict
+                  )
+              }
+            )
         case branch: Branch if !keepGoing() =>
           for _ <- open do pop()
           return Result.Unknown
@@ -897,6 +1136,22 @@ final class Solver:
           push()
           current = side(branch, branch.up)
     throw AssertionError("unreachable")
+
+  /** Bound propagation on every row as the simplex left it: it saw the rows
+   *  before the pivots, and a pivoted row can tie together variables no
+   *  original row did (`x = -y`, both at most 0, so both 0).
+   */
+  private def propagateRows(): Result =
+    var b = 0
+    while b < numVars do
+      if rows(b) != null then
+        propagateRow(b) match
+          case Result.Sat => ()
+          case unsat =>
+            tightened.clear()
+            return unsat
+      b += 1
+    Result.Sat
 
   /** Decides the rational relaxation of the bounds: bound propagation, then the
    *  simplex; `Sat` leaves the integrality to [[check]].
@@ -927,7 +1182,9 @@ final class Solver:
       b += 1
     if !mixed then break(Result.Sat)
     // The system: every bound as `Σ c·x ≤ d` with its reasons, every row touching a real as an equation.
-    val inequalities = ArrayBuffer.empty[(HashMap[Var, Rational], Delta, Set[Int])]
+    // With proofs, each with its certificate: the rows are identities over the unknowns, substituting by one
+    // changes nothing there.
+    val inequalities = ArrayBuffer.empty[(HashMap[Var, Rational], Delta, Set[Int], Certificate | Null)]
     val equations = ArrayBuffer.empty[HashMap[Var, Rational]]
     val reals = HashSet.empty[Var]
     b = 0
@@ -947,8 +1204,8 @@ final class Solver:
       if reals(x) || !isInt(x) then
         val u = upper(x)
         val l = lower(x)
-        if u != null then inequalities += ((HashMap(x -> Rational.one), u.value, u.reasons))
-        if l != null then inequalities += ((HashMap(x -> Rational(-1)), -l.value, l.reasons))
+        if u != null then inequalities += ((HashMap(x -> Rational.one), u.value, u.reasons, u.certificate))
+        if l != null then inequalities += ((HashMap(x -> Rational(-1)), -l.value, l.reasons, l.certificate))
     // Eliminate each real: by the first equation defining it, its bounds following the substitution,
     // or by pairing its upper and lower inequalities when no equation mentions it.
     val cap = 256 // a cut is an aid, not an obligation: beyond this, give up quietly
@@ -965,26 +1222,29 @@ final class Solver:
         case Some(pivot) =>
           equations -= pivot
           for eq <- equations do substitute(eq, x, pivot)
-          for (terms, _, _) <- inequalities do substitute(terms, x, pivot)
+          for (terms, _, _, _) <- inequalities do substitute(terms, x, pivot)
         case None =>
           val (touching, rest) = inequalities.toList.partition(_._1.contains(x))
           val (uppers, lowers) = touching.partition(_._1(x).signum > 0) // c·x ≤ ... vs −c·x ≤ ...
           if uppers.length * lowers.length + rest.length > cap then break(Result.Sat)
           inequalities.clear()
           inequalities ++= rest
-          for (ut, ud, ur) <- uppers; (lt, ld, lr) <- lowers do
+          for (ut, ud, ur, uc) <- uppers; (lt, ld, lr, lc) <- lowers do
             val terms = ut.clone()
             val f = ut(x) / -lt(x)
             for (y, a) <- lt do
               val updated = terms.getOrElse(y, Rational.zero) + a * f
               if updated.isZero then terms.remove(y) else terms(y) = updated
             terms.remove(x)
-            inequalities += ((terms, ud + ld * f, ur ++ lr))
+            val certificate =
+              if proofs then Certificate.Comb(Array(Rational.one, f), Array(uc.nn, lc.nn)) else null
+            inequalities += ((terms, ud + ld * f, ur ++ lr, certificate))
     // Integer-only inequalities: divide by the gcd, round down, and look for a crossing pair.
-    val best = HashMap.empty[List[(Var, BigInt)], (BigInt, Set[Int])]
-    for (terms, d, reasons) <- inequalities do
+    // With proofs, each with its certificate and the factor that took it to the key.
+    val best = HashMap.empty[List[(Var, BigInt)], (BigInt, Set[Int], Certificate | Null, Rational)]
+    for (terms, d, reasons, certificate) <- inequalities do
       if terms.isEmpty then
-        if d < Delta.zero then break(Result.Unsat(reasons))
+        if d < Delta.zero then break(unsat(reasons, certificate.nn))
       else if terms.keysIterator.forall(isInt(_)) then
         var l = BigInt(1)
         for (_, a) <- terms do l = l / (l gcd a.den) * a.den
@@ -993,11 +1253,17 @@ final class Solver:
         val key = terms.toList.map((y, a) => (y, a.num * (l / a.den) / g)).sortBy(_._1)
         val bound = (d * Rational(l) / Rational(g)).floor
         val better = best.get(key) match
-          case Some((known, _)) => bound < known
+          case Some((known, _, _, _)) => bound < known
           case None => true
-        if better then best(key) = (bound, reasons)
+        val factor = Rational(l, g)
+        if better then best(key) = (bound, reasons, certificate, factor)
         best.get(key.map((y, n) => (y, -n))) match
-          case Some((opposite, others)) if bound + opposite < 0 => break(Result.Unsat(reasons ++ others))
+          case Some((opposite, others, otherCertificate, otherFactor)) if bound + opposite < 0 =>
+            def rounded = Certificate.Comb(
+              Array(factor, otherFactor),
+              Array(Certificate.Round(certificate.nn), Certificate.Round(otherCertificate.nn))
+            )
+            break(unsat(reasons ++ others, rounded))
           case _ => ()
     Result.Sat
 
@@ -1015,8 +1281,20 @@ final class Solver:
    *  divide its constant, and is then solved for a variable of coefficient ±1,
    *  after reducing the coefficients by the smallest one through a fresh
    *  variable until there is one.
+   *
+   *  Solvable equations still leave a variable fewer values than its bounds do,
+   *  and the paper's next step, tightening, says which: with every solved
+   *  variable replaced by what it was solved to, an unknown `x` satisfies
+   *  `m·x + Σ a·y = c` over variables `y` that are free, so `m·x ≡ c` modulo
+   *  the gcd of the `a`. That lattice goes to `lattices`, for the unknowns that
+   *  have a bound or a value to avoid, and [[check]] moves their bounds onto
+   *  it: `x ≥ 1` with `x ≡ 0 (mod 4)` is `x ≥ 4`. The relaxation is as blind to
+   *  `x = y + 4k`, `0 ≤ x, y ≤ 3`, `x ≠ y` as to the parity above, and branch
+   *  and bound walks `k` there: the residues of a number modulo `2^n`, which
+   *  the bit-vectors lower to. A lattice that holds by a branch is left out: it
+   *  goes when the branch does.
    */
-  private def integerEquations(): Result = boundary:
+  private def integerEquations(lattices: ArrayBuffer[Solver.Lattice]): Result = boundary:
     val solved = HashMap.empty[Int, Equation] // x ↦ the equation `x + … = c` it was solved from
     var fresh = numVars
     var work = 0
@@ -1026,22 +1304,19 @@ final class Solver:
         if work > Solver.equationWork then break(Result.Sat)
         val g = equation.coefs.valuesIterator.foldLeft(BigInt(0))(_ gcd _)
         if equation.constant != 0 && (g == 0 || equation.constant % g != 0) then
-          break(Result.Unsat(equation.reasons))
+          break(unsat(equation.reasons, refutation(equation.factors.nn)))
         if equation.coefs.isEmpty then return
         val (x, a) = equation.coefs.minBy((y, b) => (!solved.contains(y), b.abs, y)) // solved ones first
         if solved.contains(x) then // x + rest = c: subtract a times it
-          val by = solved(x)
-          for (y, b) <- by.coefs do
-            val sum = equation.coefs.getOrElse(y, BigInt(0)) - a * b
-            if sum == 0 then equation.coefs -= y else equation.coefs(y) = sum
-          equation.constant -= a * by.constant
-          equation.reasons ++= by.reasons
+          equation.subtract(solved(x), a)
         else if a.abs == g then // ±1 once divided by the gcd: solved
           equation.coefs.mapValuesInPlace((_, b) => b / a)
           equation.constant /= a
+          val factors = equation.factors
+          if factors != null then factors.mapValuesInPlace((_, f) => f / Rational(a))
           solved(x) = equation
         else // x = t - Σ q y, where each other coefficient is q a + r: the equation becomes a t + Σ r y = c
-          val definition = Equation(HashMap(x -> BigInt(1), fresh -> BigInt(-1)), 0, Set.empty)
+          val definition = Equation(HashMap(x -> BigInt(1), fresh -> BigInt(-1)), 0, Set.empty, newFactors())
           for (y, b) <- equation.coefs.toArray if y != x do
             val q = (b.abs + a.abs / 2) / a.abs * (b.signum * a.signum) // b / a rounded: |r| ≤ |a| / 2
             if q != 0 then definition.coefs(y) = q
@@ -1052,6 +1327,21 @@ final class Solver:
           fresh += 1
         solved.get(x).forall(_ ne equation)
       do ()
+    def newFactors(): HashMap[Var, Rational] | Null = if proofs then HashMap.empty else null
+    // The equation `Σ f·x = Σ f·c` of the fixed variables, an integer combination over the unknowns whose
+    // constant is not a multiple of the gcd of its coefficients: its two sides, each rounded, cross.
+    def refutation(factors: HashMap[Var, Rational]): Certificate =
+      Certificate.Comb(
+        Array(Rational.one, Rational.one),
+        Array(Certificate.Round(side(factors, true)), Certificate.Round(side(factors, false)))
+      )
+    // `Σ f·x ≤ Σ f·c` (`up`) or `≥`, from the bounds that fix the variables `x`.
+    def side(factors: HashMap[Var, Rational], up: Boolean): Certificate =
+      val parts = factors.toArray
+      Certificate.Comb(
+        parts.map(_._2.abs),
+        parts.map((x, f) => (if (f.signum > 0) == up then upper(x) else lower(x)).nn.certificate.nn)
+      )
     def isFixed(x: Var): Boolean =
       val l = lower(x)
       val u = upper(x)
@@ -1060,16 +1350,71 @@ final class Solver:
     def fix(x: Var): Unit =
       if isFixed(x) && mentioned.add(x) then
         val reasons = lower(x).nn.reasons ++ upper(x).nn.reasons
-        eliminate(Equation(HashMap(x -> BigInt(1)), lower(x).nn.value.r.num, reasons))
-    for b <- 0 until numVars do
+        val factors = newFactors()
+        if factors != null then factors(x) = Rational.one
+        eliminate(Equation(HashMap(x -> BigInt(1)), lower(x).nn.value.r.num, reasons, factors))
+    // The row of the basic `b` as an equation over the integers, `Σ l·a·x − l·b = 0`: none if a real is in it.
+    def ofRow(b: Var): Equation | Null =
       val row = rows(b)
-      if row != null && isInt(b) && !row.existsVar(x => !isInt(x)) then
+      if row == null || !isInt(b) || row.existsVar(x => !isInt(x)) then null
+      else
         val terms = (0 until row.size).map(i => (row.varAt(i), row.coefAt(i)))
         val l = terms.foldLeft(BigInt(1))((l, term) => l / (l gcd term._2.den) * term._2.den)
-        if l != 1 || isFixed(b) then // l·b = Σ l·a·x, then what the bounds fix among its variables
-          eliminate(Equation(HashMap.from(terms.map((x, a) => (x, a.num * (l / a.den)))) += b -> -l, 0, Set.empty))
-          (b +: terms.map(_._1)).foreach(fix)
+        Equation(HashMap.from(terms.map((x, a) => (x, a.num * (l / a.den)))) += b -> -l, 0, Set.empty, newFactors())
+    for b <- 0 until numVars do
+      val equation = ofRow(b)
+      if equation != null && (equation.coefs(b) != -1 || isFixed(b)) then
+        eliminate(equation) // l·b = Σ l·a·x, then what the bounds fix among its variables
+        val row = rows(b).nn
+        fix(b)
+        for i <- 0 until row.size do fix(row.varAt(i))
+    // The lattices. A row left out above defines its variable, and is where that variable's lattice starts.
+    val avoiding = HashSet.from(distinct.iterator.map(_._1))
+    for
+      x <- 0 until numVars
+      if isInt(x) && !isFixed(x) && (lower(x) != null || upper(x) != null || avoiding(x))
+    do
+      val start = solved.getOrElse(x, ofRow(x))
+      if start != null then
+        val equation = start.copy()
+        var y = equation.coefs.keysIterator.find(y => y != x && solved.contains(y))
+        while y.nonEmpty do // minus a times `y + rest = c`, as `eliminate` rewrites
+          val by = solved(y.get)
+          val a = equation.coefs(y.get)
+          work += by.coefs.size
+          if work > Solver.equationWork then break(Result.Sat)
+          equation.subtract(by, a)
+          y = equation.coefs.keysIterator.find(y => y != x && solved.contains(y))
+        val m = equation.coefs.getOrElse(x, BigInt(0))
+        val g = equation.coefs.iterator.collect { case (z, a) if z != x => a }.foldLeft(BigInt(0))(_ gcd _)
+        if m != 0 && g > 1 then // m·x ≡ c (mod g), which is x ≡ c' (mod g / d) for d = gcd(m, g)
+          val d = m.abs gcd g
+          if equation.constant % d != 0 then break(unsat(equation.reasons, refutation(equation.factors.nn)))
+          if g / d > 1 && equation.reasons.forall(_ >= 0) then // a branch's reason is negative
+            val u = (m / d).modInverse(g / d)
+            val c = ((equation.constant / d) * u).mod(g / d)
+            val premises = equation.reasons.toArray.map(r => Bound(Delta.zero, r, Array.empty, reasons))
+            val factors = equation.factors
+            lattices += (
+              if factors == null then Solver.Lattice(x, c, g / d, premises)
+              else
+                Solver.Lattice(x, c, g / d, premises, side(factors, true), side(factors, false), Rational(u, d))
+            )
     Result.Sat
+
+  /** The certificate of the bound of `lattice.x` that `bound` moves onto the
+   *  lattice (see `align` in [[check]]), an upper bound if `upper`. With `λ`
+   *  the lattice's factor, the equation `m·x + S = k` times `λ` is
+   *  `x + T = λ·k`, where every coefficient of `T = (λ·m − 1)·x + λ·S` over the
+   *  unknowns is a multiple of `g`: `λ·m ≡ 1` and the coefficients of `S` are
+   *  multiples of `g·d`. So `T ≤ λ·k − v` from `x ≥ v` rounds to a multiple of
+   *  `g`, and the equation turns that back into a bound on `x`, on the lattice.
+   */
+  private def onLattice(lattice: Solver.Lattice, bound: Bound, upper: Boolean): Certificate =
+    val (towards, back) = if upper then (lattice.above, lattice.below) else (lattice.below, lattice.above)
+    val rounded = Certificate.Round(bound.certificate.nn) // `x` is an integer: its bound, an integer
+    val t = Certificate.Round(Certificate.Comb(Array(lattice.lambda, Rational.one), Array(towards.nn, rounded)))
+    Certificate.Comb(Array(Rational.one, lattice.lambda), Array(t, back.nn))
 
   /** Repairs the basic variables violating their bounds, smallest first, by
    *  pivoting with the smallest non-basic variable of their row that can move
@@ -1101,7 +1446,19 @@ final class Solver:
           val j = row.varAt(i)
           reasons = reasons ++ (if row.coefAt(i).signum > 0 == tooLow then upper(j) else lower(j)).nn.reasons
           i += 1
-        return Result.Unsat(reasons)
+        // The bound of `b`, and the row's absolute coefficients for the bounds of its variables.
+        return unsat(
+          reasons,
+          comb(
+            Array.tabulate(row.size + 1)(k => if k == row.size then Rational.one else row.coefAt(k).abs),
+            Array.tabulate(row.size + 1)(k =>
+              if k == row.size then bound.certificate.nn
+              else
+                val j = row.varAt(k)
+                (if row.coefAt(k).signum > 0 == tooLow then upper(j) else lower(j)).nn.certificate.nn
+            )
+          )
+        )
       if !keepGoing() then return Result.Unknown
       pivotAndUpdate(b, n, bound.value)
     throw AssertionError("unreachable")

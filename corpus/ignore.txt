@@ -1,7 +1,10 @@
 # path, a tab, the reason: the files the tests expect to fail (see README.md); kept sorted (byte order)
-QF_ABV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_1_cilled_ok_nondet_linux-3.4-32_1-drivers--net--irda--litelink-sir.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	timeout (5 s limit)
-QF_ABV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_7a_cilled_linux-3.8-rc1-drivers--misc--phantom.ko-main.cil.out_smt-query.0.smt2	timeout (5 s limit)
-QF_ABV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__recursive_list_smt-query.1.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress0-aufbv__dubreva005ue.smtv1.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress0-aufbv__fifo32bc06k08.smtv1.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress0-aufbv__fifo32in06k08.smtv1.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress1-aufbv__fuzz03.smtv1.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress2__issue3687-check-models.smt2	timeout (5 s limit)
+QF_ABV/cvc5/regress3__aufbv-wchains010ue.smtv1.smt2	timeout (5 s limit)
 QF_ABV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__test10_smt-query.0.smt2	timeout (5 s limit)
 QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_clnt.blast.01.i.cil-1.c_4.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_clnt.blast.02.i.cil-2.c_4.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
@@ -9,31 +12,26 @@ QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_srvr.blast.01.i.cil-1.c_
 QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_srvr.blast.01.i.cil-1.c_2.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_srvr.blast.06.i.cil-1.c_3.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/20230321-UltimateAutomizerSvcomp2023__s3_srvr.blast.06.i.cil-1.c_4.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/bench_ab__a307test0003.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/bench_ab__b168test0010.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/bench_ab__ft-out-2006-03-02--18_03_59-test0002.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/bmc-arrays__array_free.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/bmc-arrays__ex40.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/bmc-arrays__ex9.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere3__unconstrained06.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere3__unconstrained07.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/brummayerbiere__wchains002se.smt2	timeout (5 s limit)
 QF_ABV/smt-lib/brummayerbiere__wchains006se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere__wchains010se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere__wchains015se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere__wchains019se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere__wchains026se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/brummayerbiere__wchains036se.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/egt__egt-2647.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/egt__egt-6506.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__copy_array__copy_array36.c.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__copy_array__copy_array46.c.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/platania__copy_array__copy_array6.c.smt2	timeout (5 s limit)
 QF_ABV/smt-lib/platania__no_init_extract_sublist__no_init_extract_sublist14.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__no_init_extract_sublist__no_init_extract_sublist9.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
 QF_ABV/smt-lib/platania__no_init_simple_member__no_init_simple_member17.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_ABV/smt-lib/platania__selection_sort__selection_sort7.c.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_ABV/smt-lib/platania__strcmp__strcmp37.c.smt2	timeout (5 s limit)
+QF_ALIA/smt-lib-incremental/UltimateBuchiAutomizer__a.08-alloca_true-termination.c.i.prefix40.smt2	timeout (5 s limit)
+QF_ALIA/smt-lib-incremental/UltimateBuchiAutomizer__cstrncpy-alloca_true-termination.c.i.prefix40.smt2	timeout (5 s limit)
 QF_ALIA/smt-lib/20230321-UltimateAutomizerSvcomp2023__cs_lazy.i_3.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_ALIA/smt-lib/20230321-UltimateAutomizerSvcomp2023__cs_lazy.i_7.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_ALIA/smt-lib/20230321-UltimateAutomizerSvcomp2023__cs_stateful-1.i_4.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
@@ -41,19 +39,16 @@ QF_ALIA/smt-lib/array_benchmarks__stack-invalid-6.smt2	skip: out of memory at 2 
 QF_ALIA/smt-lib/array_benchmarks__stack-th1-6.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_ALIA/smt-lib/cvc__pp-dmem-a.smt2	skip: the encoding runs past the guard (the array lemmas), and a thread left running keeps its memory
 QF_ALIA/smt-lib/cvc__pp-dmem2.smt2	skip: the encoding runs past the guard (the array lemmas), and a thread left running keeps its memory
-QF_ALIA/smt-lib/cvc__read2.smt2	timeout (5 s limit)
 QF_ALIA/smt-lib/qlock2__qlock.base.5.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_ALIA/smt-lib/qlock2__qlock.induction.5.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_ALIA/smt-lib/qlock2__qlock.induction.6.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
+QF_ALIA/smtinterpol/model__buggy001.smt2	timeout (5 s limit)
 QF_AUFBV/smt-lib-incremental/2018-Wolf-fmbench__VexRiscv-regch0-15-compact.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
 QF_AUFBV/smt-lib-incremental/2019-Wolf-fmbench__2019B__marlann_compute_fail1_QF_AUFBV.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
 QF_AUFBV/smt-lib/20210301-Alive2__sqlite3__906_sqlite3.smt2	skip: out of memory at 2 GB before the search (the array lemmas), which would end the suite
-QF_AUFBVDTLIA/stainless/invalid-BinarySearch1__29.smt2	timeout (5 s limit)
-QF_AUFBVDTLIA/stainless/invalid-BinarySearch1__30.smt2	timeout (5 s limit)
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__205_9a_array_unsafes_linux-3.16-rc1.tar.xz-205_9a-drivers--net--ppp--ppp_generic.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__205_9a_array_unsafes_linux-3.16-rc1.tar.xz-205_9a-drivers--net--wireless--mwifiex--mwifiex_sdio.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_1_cilled_ok_nondet_linux-3.4-32_1-drivers--input--misc--atlas_btns.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
-QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_1_cilled_ok_nondet_linux-3.4-32_1-drivers--platform--x86--dell-wmi-aio.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	timeout (5 s limit)
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_1_cilled_ok_nondet_linux-3.4-32_1-drivers--usb--dwc3--dwc3-pci.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound; it answered fast while a store declared after the first check-sat got no axioms (issue 13)
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_7_cilled_const_ok_linux-32_1-drivers--isdn--capi--kernelcapi.ko-ldv_main3_sequence_infinite_withcheck_stateful.cil.out_smt-query.1.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__32_7a_cilled_linux-3.8-rc1-32_7a-drivers--block--paride--pf.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
@@ -62,22 +57,39 @@ QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-3
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.0-rc1---drivers--block--paride--pf.ko.cil_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.2-rc1.tar.xz-43_2a-drivers--crypto--qat--qat_common--intel_qat.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard (the array lemmas), which the fuel does not bound
 QF_AUFBVLIA/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-4.2-rc1.tar.xz-43_2a-drivers--infiniband--ulp--isert--ib_isert.ko-entry_point.cil.out_smt-query.0.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
+QF_AUFLIA/cvc5/regress1-auflia__bug330.smt2	timeout (5 s limit)
+QF_AUFLIA/cvc5/regress4__bug337.smt2	timeout (5 s limit)
+QF_AUFLIA/cvc5/regress4__swap_t1_pp_nf_ai_00010_004.cvc.smt2	timeout (5 s limit)
 QF_AUFLIA/smt-lib/array_benchmarks__pipeline-invalid.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
-QF_AUFLIA/smt-lib/cvc__read7.smt2	skip: the sharing atoms exhaust the heap at the encoding
 QF_AUFLIA/smt-lib/cvc__read8.smt2	skip: the sharing atoms exhaust the heap at the encoding
-QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_002.cvc.smt2	timeout (5 s limit)
-QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_003.cvc.smt2	timeout (5 s limit)
-QF_AUFLIA/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ni_00010_005.cvc.smt2	timeout (5 s limit)
-QF_AX/smt-lib/cvc__read5.smt2	skip: the sharing atoms exhaust the heap at the encoding
-QF_AX/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ai_00010_001.cvc.smt2	skip: the sharing atoms exhaust the heap at the encoding
-QF_AX/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ai_00010_002.cvc.smt2	skip: the sharing atoms exhaust the heap at the encoding
-QF_AX/smt-lib/storecomm__storecomm_invalid_t1_np_nf_ai_00010_005.cvc.smt2	skip: the sharing atoms exhaust the heap at the encoding
-QF_BV/cvc5/regress0-bv__bitvec1.smtv1.smt2	timeout (5 s limit)
+QF_AUFLIA/smtinterpol/regression__Script_simple_true-unreach-call_false-valid-memtrack.i_Iterationsimple_true-unreach-call_false-valid-memtrack.i_2.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bitvec0.delta01.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bitvec0.smtv1.smt2	timeout (5 s limit)
 QF_BV/cvc5/regress0-bv__bitvec3.smtv1.smt2	timeout (5 s limit)
-QF_BV/cvc5/regress0-bv__extract-concat.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bitvec5.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bv_eq_diamond14.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bv_eq_diamond15.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bv_eq_diamond16.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__bv_eq_diamond17.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-concat-5.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-concat-6.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-concat-7.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-extract-10.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-extract-5.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-extract-6.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-extract-7.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__extract-extract-9.smtv1.smt2	timeout (5 s limit)
 QF_BV/cvc5/regress0-bv__extract-extract.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__fuzz41.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__mul-flatten.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__mul-neg-unsat.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress0-bv__mul-negpow2.smt2	timeout (5 s limit)
 QF_BV/cvc5/regress0-proofs__eval-rhs.smt2	timeout (5 s limit)
-QF_BV/princess/bitvectors__splitcore.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress3__bv-core-ext_con_004_001_1024.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress3__bv-fuzz15.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress3__bv-fuzz16.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress3__bv-fuzz17.smtv1.smt2	timeout (5 s limit)
+QF_BV/cvc5/regress4__bug396.smt2	timeout (5 s limit)
 QF_BV/smt-lib-incremental/20170501-Heizmann-UltimateAutomizer__modulus_true-unreach-call_true-no-overflow.i.smt2	timeout (5 s limit)
 QF_BV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__linux-3.14_complex_emg_linux-kernel-locking-spinlock_drivers-net-can-softing-softing.cil_smt-query.0.smt2	skip: the parser's recursion overflows the stack (a deep nest)
 QF_BV/smt-lib-incremental/20190307-CPAchecker_kInduction-SoSy_Lab__pals_floodmax.3.3.ufo.UNBOUNDED.pals.c.v+lhb-reducer_smt-query.1.smt2	skip: the parser's recursion overflows the stack (a deep nest)
@@ -102,12 +114,6 @@ QF_BV/smt-lib/20220315-ecrw__rw_rule_candidate_vmcai_2022_bw512_12.smt2	timeout 
 QF_BV/smt-lib/20220315-ecrw__rw_rule_candidate_vmcai_2022_bw512_21.smt2	timeout (5 s limit)
 QF_BV/smt-lib/20221012-MCMPC__dualexecution__dualexecution.t1.i12.1e395345.smt2	timeout (5 s limit)
 QF_BV/smt-lib/20221012-MCMPC__dualexecution__dualexecution.t1.i16.e7c172b6.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__millionaires__millionaires.t1.i24.01a5fe45.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__wage__wage.t1.i32.bbcf072f.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__wage__wage.t1.i33.1f0f7856.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__wage__wage.t1.i33.e282d06f.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__wage_circuit_div__wage_circuit_div.t1.i23.4850a3e0.smt2	timeout (5 s limit)
-QF_BV/smt-lib/20221012-MCMPC__wage_circuit_div__wage_circuit_div.t1.i28.00f8325e.smt2	timeout (5 s limit)
 QF_BV/smt-lib/20221214-p4dfa-XiaoqiChen__MobileDevice__mobiledevice_bit8_na1_nr1_twocond.smt2	timeout (5 s limit)
 QF_BV/smt-lib/20230224-grsbits-truby__grs-32-16.smt2	timeout (5 s limit)
 QF_BV/smt-lib/20230224-grsbits-truby__grs-64-16.smt2	timeout (5 s limit)
@@ -116,8 +122,6 @@ QF_BV/smt-lib/RWS__Example_6.txt.smt2	timeout (5 s limit)
 QF_BV/smt-lib/Sage2__bench_16332.smt2	timeout (5 s limit)
 QF_BV/smt-lib/Sage2__bench_2291.smt2	timeout (5 s limit)
 QF_BV/smt-lib/Sage2__bench_3488.smt2	timeout (5 s limit)
-QF_BV/smt-lib/Sage2__bench_4528.smt2	timeout (5 s limit)
-QF_BV/smt-lib/Sage2__bench_4619.smt2	timeout (5 s limit)
 QF_BV/smt-lib/Sage2__bench_5090.smt2	timeout (5 s limit)
 QF_BV/smt-lib/VS3__VS3-benchmark-A6.smt2	timeout (5 s limit)
 QF_BV/smt-lib/VS3__VS3-benchmark-A7.smt2	timeout (5 s limit)
@@ -161,6 +165,7 @@ QF_BV/smt-lib/fft__Sz128_2823.smt2	timeout (5 s limit)
 QF_BV/smt-lib/fft__Sz128_2824.smt2	timeout (5 s limit)
 QF_BV/smt-lib/fft__Sz256_6615.smt2	timeout (5 s limit)
 QF_BV/smt-lib/fft__Sz256_6616.smt2	timeout (5 s limit)
+QF_BV/smt-lib/float__e2a_3.c.smt2	timeout (5 s limit)
 QF_BV/smt-lib/galois__iffyInterleavedModMult-4.smt2	timeout (5 s limit)
 QF_BV/smt-lib/galois__iffyInterleavedModMult-8.smt2	timeout (5 s limit)
 QF_BV/smt-lib/gulwani-pldi08__fig5.phx.smt2	timeout (5 s limit)
@@ -169,30 +174,56 @@ QF_BV/smt-lib/log-slicing__bvadd_12000.smt2	timeout (5 s limit)
 QF_BV/smt-lib/log-slicing__bvadd_12887.smt2	timeout (5 s limit)
 QF_BV/smt-lib/mcm__06.smt2	timeout (5 s limit)
 QF_BV/smt-lib/mcm__42.smt2	timeout (5 s limit)
-QF_BV/smt-lib/millionaires__millionaires.t1.i24.7e74b377.smt2	timeout (5 s limit)
-QF_BV/smt-lib/millionaires__millionaires.t1.i25.29150f24.smt2	timeout (5 s limit)
-QF_BV/smt-lib/millionaires__millionaires.t1.i27.71e39139.smt2	timeout (5 s limit)
 QF_BV/smt-lib/pipe__pipe-noabs.atlas.qf_bv.smt2	timeout (5 s limit)
 QF_BV/smt-lib/rubik__6moves_mti_5-Atd_00004_bmc.smt2	timeout (5 s limit)
 QF_BV/smt-lib/spear__openldap_v2.3.35__servers_slapd_a_vc149921.smt2	timeout (5 s limit)
+QF_BV/smt-lib/spear__samba_v3.0.24__bin_libmsrpc_vc1225601.smt2	timeout (5 s limit)
 QF_BV/smt-lib/spear__zebra_v0.95a__bgpd_bgpd_vc75770.smt2	timeout (5 s limit)
+QF_BV/smt-lib/uclid__tcas__tcas45_k_0.smt2	timeout (5 s limit)
 QF_BV/smt-lib/uclid__tcas__tcas60_k_0.smt2	timeout (5 s limit)
 QF_BV/smt-lib/uclid_contrib_smtcomp09__nt_bv_formula.smt2	timeout (5 s limit)
 QF_BV/smt-lib/uclid_contrib_smtcomp09__std_bv_formula.smt2	timeout (5 s limit)
 QF_BV/smt-lib/uum__uum8.smt2	timeout (5 s limit)
 QF_BV/smt-lib/wienand-cav2008__Commute__commute08.sf.smt2	timeout (5 s limit)
 QF_BV/smt-lib/wienand-cav2008__Commute__commute16.sf.smt2	timeout (5 s limit)
-QF_BV/stainless/valid-BitsTricks__2.smt2	timeout (5 s limit)
+QF_BV/smtinterpol/bv__bvshl01.smt2	timeout (5 s limit)
+QF_DT/cvc5/regress1-datatypes__acyclicity-sr-ground096.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_DT/smt-lib/20210312-Bouvier__vlsat3_b07.smt2	timeout (5 s limit)
 QF_DT/smt-lib/20210312-Bouvier__vlsat3_b40.smt2	timeout (5 s limit)
 QF_DT/smt-lib/20210312-Bouvier__vlsat3_b49.smt2	timeout (5 s limit)
 QF_DT/smt-lib/20230720-blocksworld__from_14_0_3_to_12_4_1_bmc_7.smt2	timeout (5 s limit)
-QF_IDL/princess/special__diamonds.16.3.i.a.u.smt2	timeout (5 s limit)
 QF_LIA/cvc5/regress3__arith_prp-13-24.smt2	timeout (5 s limit)
-QF_LIA/princess/smtlib-parser__int_incompleteness2.smt2	timeout (5 s limit)
-QF_LIA/princess/smtlib-parser__int_incompleteness3.smt2	timeout (5 s limit)
 QF_LIA/smt-lib-incremental/lustre__ex3.bmc_k100.smt2	timeout (5 s limit)
 QF_LIA/smt-lib-incremental/lustre__traffic.bmc_k100.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-10.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-5.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-6.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-7.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-8.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-273-245-9.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-10.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-5.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-6.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-7.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-8.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lia__tightrhombus-283-245-9.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lira__cut-lemmas__10-vars__cut_lemma_02_001-a.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lira__cut-lemmas__20-vars__cut_lemma_01_002-a.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lira__tightrhombus-273-245-4-sat.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lira__tightrhombus-273-245-4-satmod.smt2	timeout (5 s limit)
+QF_LIA/smtinterpol/lira__tightrhombus-273-245-4-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-283-245-4-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-10-sat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-10-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-8-sat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-8-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-9-sat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-273-245-9-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-283-245-10-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-283-245-4-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-283-245-8-unsat.smt2	timeout (5 s limit)
+QF_LIRA/smtinterpol/lira__tightrhombus-lira-283-245-9-unsat.smt2	timeout (5 s limit)
+QF_LRA/cvc5/regress4__bug143.smtv1.smt2	timeout (5 s limit)
 QF_LRA/smt-lib/2017-Heizmann-UltimateInvariantSynthesis___count_by_k.i_3_3_2.bpl_7.smt2	beyond the search today (minutes of simplex, or not answered within them)
 QF_LRA/smt-lib/2017-Heizmann-UltimateInvariantSynthesis___overflow1.i_3_8_2.bpl_7.smt2	beyond the search today (minutes of simplex, or not answered within them)
 QF_LRA/smt-lib/CooperatingT2__agafp.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2	beyond the search today (minutes of simplex, or not answered within them)
@@ -207,20 +238,30 @@ QF_LRA/smt-lib/miplib__pp08a-7350.smt2	beyond the search today (minutes of simpl
 QF_LRA/smt-lib/miplib__pp08a-9000.smt2	beyond the search today (minutes of simplex, or not answered within them)
 QF_LRA/smt-lib/tropical-matrix__constraint-199552.smt2	beyond the search today (minutes of simplex, or not answered within them)
 QF_LRA/smt-lib/tropical-matrix__constraint-223827.smt2	beyond the search today (minutes of simplex, or not answered within them)
+QF_RDL/smt-lib/sal__fischer3-mutex-17.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/sal__fischer6-mutex-11.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/sal__fischer6-mutex-15.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/sal__fischer9-mutex-11.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/sal__fischer9-mutex-13.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/scheduling__abz7_500.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/scheduling__orb01_1000.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/scheduling__orb03_1100.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/scheduling__orb06_1000.smt2	timeout (5 s limit)
+QF_RDL/smt-lib/scheduling__orb08_930.smt2	timeout (5 s limit)
+QF_UF/cvc5/regress0-uf__eq_diamond23.smtv1.smt2	timeout (5 s limit)
+QF_UF/cvc5/regress0-uf__iso_icl_repgen004.smtv1.smt2	timeout (5 s limit)
 QF_UF/cvc5/regress3__hole10.cvc.smt2	timeout (5 s limit)
 QF_UF/cvc5/regress3__hole9.cvc.smt2	timeout (5 s limit)
+QF_UF/cvc5/regress4__instance_1151.smtv1.smt2	timeout (5 s limit)
 QF_UF/smt-lib/PEQ__PEQ018_size5.smt2	timeout (5 s limit)
 QF_UF/smt-lib/SEQ__SEQ009_size10.smt2	timeout (5 s limit)
+QF_UF/smtinterpol/lira__tightrhombus-273-245-4b-sat.smt2	timeout (5 s limit)
+QF_UF/smtinterpol/lira__tightrhombus-273-245-4b-unsat.smt2	timeout (5 s limit)
 QF_UF/z3test/regressions__fp-rounding_mode-3.smt2	the parser refuses RoundingMode, a floating-point sort it does not support
-QF_UFBV/dotty/alpha-mergeSortBounds2-beed69a33f4e.smt2	skip: bvsdiv of two unknowns, outside the fragment (no bit-blasting)
-QF_UFBV/smt-lib-incremental/2018-Goel-hwbench__QF_UFBV_bv_bv_v_FIFO_ab_min_max.smt2	timeout (5 s limit)
 QF_UFBV/smt-lib-incremental/2018-Wolf-fmbench__zipcpu-zipmmu-compact.smt2	timeout (5 s limit)
 QF_UFBV/smt-lib-incremental/2019-Wolf-fmbench__2019B__marlann_compute_cp_fail1_QF_UFBV.smt2	timeout (5 s limit)
-QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv8_bv_needham.1.prop1_ab_reg_max.smt2	timeout (5 s limit)
 QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv_bv_at.1.prop1_ab_cti_max.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv_bv_brp2.2.prop3_ab_reg_max.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv_bv_iprotocol.1.prop1_ab_reg_max.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv_bv_resistance.2.prop1_ab_cti_max.smt2	beyond the search today (the fuel, two million steps, runs out)
+QF_UFBV/smt-lib/2018-Goel-hwbench__QF_UFBV_bv_bv_peterson.2.prop1_ab_reg_max.smt2	timeout (5 s limit)
 QF_UFBV/smt-lib/2019-Wolf-fmbench__2018E__zipcpu-busdelay-compact-mem.smt2	timeout (5 s limit)
 QF_UFBV/smt-lib/2019-Wolf-fmbench__2018E__zipcpu-busdelay-compact-nomem.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
 QF_UFBV/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_55_QF_UFBV.smt2	timeout (5 s limit)
@@ -243,6 +284,48 @@ QF_UFBV/stainless/valid-BitsTricksSlow__6.smt2	timeout (5 s limit)
 QF_UFBV/stainless/valid-Longs__12.smt2	timeout (5 s limit)
 QF_UFBV/stainless/valid-Longs__6.smt2	timeout (5 s limit)
 QF_UFBV/stainless/valid-Longs__7.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_cmovcc_16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_cmovcc_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_cmovcc_64.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_imul_trunc_16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_imul_trunc_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_imul_trunc_8.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_lzcnt_cf_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_lzcnt_zf_16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_lzcnt_zf_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_popcnt_zf_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcl16.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
+QF_UFBVDT/other/sail-x86__prop_rcl8.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcl_step16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcl_step32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcl_step64.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcr16.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
+QF_UFBVDT/other/sail-x86__prop_rcr8.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcr_step16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcr_step32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rcr_step64.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotatel17_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotatel33_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotatel65_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotatel9_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotater17_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotater33_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotater65_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_rotater9_compose.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_tzcnt_cf_32.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_tzcnt_zf_16.smt2	timeout (5 s limit)
+QF_UFBVDT/other/sail-x86__prop_tzcnt_zf_32.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__25959_5dee2e2f6ef44465a2bea4b085818948_65_QF_UFDTBV.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_55_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_56_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_57_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__39657_2866defdd1f2434b69ab_47_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__41958_32933c5a1384696720a2_63_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__41958_45c688a4814eb926c254_59_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_34_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_36_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__52759_af0c476fe3b544b9a8507f3e42472c43_12_QF_UFDTBV.smt2	timeout (5 s limit)
+QF_UFBVDT/smt-lib/20230314-Jaroslav-Bendik-Certora__63058_64ab9a7ef7b6c3492507_22_QF_UFDTBV.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/invalid-BraunTree__13.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/invalid-BraunTree__17.smt2	timeout (5 s limit)
 QF_UFBVDT/stainless/invalid-PackedFloat8__1.smt2	timeout (5 s limit)
@@ -267,17 +350,13 @@ QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e64.smt2	skip: the encoding runs past t
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e70.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDT/smt-lib/20210312-Bouvier__vlsat3_e80.smt2	skip: out of the search's reach (over 30 s as a native binary)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__17512_5c1021b0faa6b6e1791b_19_QF_UFDTLIA.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
-QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__3106_1c933134166dbad31f79_40_QF_UFDTLIA.smt2	skip: out of the search's reach (over 30 s as a native binary)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__3106_1c933134166dbad31f79_41_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_55_QF_UFDTLIA.smt2	skip: out of the search's reach (over 30 s as a native binary)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_57_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__41958_32933c5a1384696720a2_63_QF_UFDTLIA.smt2	timeout (5 s limit)
-QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_34_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_36_QF_UFDTLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__52759_af0c476fe3b544b9a8507f3e42472c43_12_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_5_QF_UFDTLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
-QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_6_QF_UFDTLIA.smt2	skip: out of the search's reach (over 30 s as a native binary)
-QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_8_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__72658_63104dadde9c6026353f_70_QF_UFDTLIA.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__72771_f9d228efc97cf1458e38_64_QF_UFDTLIA.smt2	timeout (5 s limit)
 QF_UFDTLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_1_UFDTLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
@@ -290,25 +369,16 @@ QF_UFIDL/smt-lib/20210312-Bouvier__vlsat3_f81.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/mathsat__EufLaArithmetic__vhard__vhard6.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/mathsat__EufLaArithmetic__vhard__vhard7.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/mathsat__EufLaArithmetic__vhard__vhard8.smt2	timeout (5 s limit)
-QF_UFIDL/smt-lib/pete2__c6bid_s.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete2__c6n_i.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete2__c6nidw_s.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/pete2__c8b.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete2__g6nid.smt2	beyond the search today (the fuel, two million steps, runs out)
 QF_UFIDL/smt-lib/pete3__bug_file1.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
 QF_UFIDL/smt-lib/pete3__bug_file2.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
 QF_UFIDL/smt-lib/pete3__bug_file5.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
-QF_UFIDL/smt-lib/pete__cxs-bp-ex-inp-safety.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete__cxs-bp-ex.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete__cxs-bp-safety.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFIDL/smt-lib/pete__cxs-bp.smt2	beyond the search today (the fuel, two million steps, runs out)
 QF_UFIDL/smt-lib/pete__fxs-safety.smt2	beyond the search today (the fuel, two million steps, runs out)
 QF_UFIDL/smt-lib/uclid2__bug1.smt2	beyond the search today (the fuel, two million steps, runs out)
 QF_UFIDL/smt-lib/uclid2__cache.inv15.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/uclid2__cache.inv16.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/uclid2__ooo.rf11.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
 QF_UFIDL/smt-lib/uclid2__ooo.rf12.smt2	skip: the encoding exhausts a 512 MB heap before any search, which the fuel does not bound
-QF_UFIDL/smt-lib/uclid__ooo.rf8.smt2	beyond the search today (the fuel, two million steps, runs out)
 QF_UFIDL/smt-lib/uclid__ooo.rf9.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/uclid__q2.14.smt2	timeout (5 s limit)
 QF_UFIDL/smt-lib/uclid__q2.18.smt2	timeout (5 s limit)
@@ -316,32 +386,21 @@ QF_UFLIA/smt-lib-incremental/kind__SYNAPSE_6_e3_1666_e5_1558.ec.smt2	skip: the e
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__11775_ad46e5b8db4748c51973_43_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__17512_5c1021b0faa6b6e1791b_19_QF_UFLIA.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__17512_5c1021b0faa6b6e1791b_21_QF_UFLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
-QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__3106_1c933134166dbad31f79_40_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__38347_092cc73601c78e45f4f9_55_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__39657_2866defdd1f2434b69ab_47_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__41958_32933c5a1384696720a2_62_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_34_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__44788_1965f0d6d94d5d8054ba_36_QF_UFLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_5_QF_UFLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
-QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_7_QF_UFLIA.smt2	timeout (5 s limit)
-QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__65782_cd31513fdcd15701933b_8_QF_UFLIA.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__72658_63104dadde9c6026353f_70_QF_UFLIA.smt2	skip: out of memory at 2 GB (the sharing of a large QF_UFLIA instance)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__72658_63104dadde9c6026353f_71_QF_UFLIA.smt2	skip: out of memory at 2 GB (the sharing of a large QF_UFLIA instance)
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_0_UFLIA.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
 QF_UFLIA/smt-lib/20230314-Jaroslav-Bendik-Certora__83314_a702bf8b823398c9e37a_3_UFLIA.smt2	skip: the encoding runs past the suite's guard, which the fuel does not bound
-QF_UFLIA/smt-lib/mathsat__EufLaArithmetic__hard__hard13.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/mathsat__Hash__hash_sat_10_20.smt2	skip: the parser's recursion overflows the stack (a deep nest)
 QF_UFLIA/smt-lib/wisas__xs_24_44.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/wisas__xs_32_52.smt2	timeout (5 s limit)
 QF_UFLIA/smt-lib/wisas__xs_40_60.smt2	beyond the search today (the fuel, two million steps, runs out)
-QF_UFLIA/stainless/invalid-ForallAssoc__0.smt2	timeout (5 s limit)
 QF_UFLIA/submission/20260311-TPTP__ARI654_1.smt2	timeout (5 s limit)
-QF_UFLIA/submission/20260311-TPTP__ARI692_1.smt2	timeout (5 s limit)
-QF_UFLRA/smt-lib/cpachecker-induction-svcomp14__cpachecker-induction.32_1_cilled_true-unreach-call_ok_nondet_linux-3.4-32_1-drivers--input--keyboard--xtkbd.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out.c.smt2	timeout (5 s limit)
-QF_UFLRA/smt-lib/cpachecker-induction-svcomp14__cpachecker-induction.32_1_cilled_true-unreach-call_ok_nondet_linux-3.4-32_1-drivers--scsi--dmx3191d.ko-ldv_main0_sequence_infinite_withcheck_stateful.cil.out.c.smt2	timeout (5 s limit)
+QF_UFLRA/cvc5/regress3__incorrect1.smtv1.smt2	timeout (5 s limit)
 QF_UFLRA/smt-lib/cpachecker-induction-svcomp14__cpachecker-induction.Problem02_30_true-unreach-call.c.smt2	skip: out of memory at 2 GB before the search (the lowering or the theory lemmas), which would end the suite
-QF_UFLRA/smt-lib/mathsat__RandomCoupled__pb_real_40_0400_10_23.smt2	timeout (5 s limit)
-QF_UFLRA/smt-lib/mathsat__RandomCoupled__pb_real_40_0800_10_25.smt2	timeout (5 s limit)
 QF_UFLRA/smt-lib/mathsat__RandomCoupled__pb_real_40_1200_10_18.smt2	timeout (5 s limit)
-QF_UFLRA/smt-lib/mathsat__RandomDecoupled__pb_real_50_100_30_62.smt2	timeout (5 s limit)
-QF_UFLRA/smt-lib/mathsat__RandomDecoupled__pb_real_50_150_30_93.smt2	timeout (5 s limit)

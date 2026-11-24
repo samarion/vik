@@ -1,0 +1,8 @@
+; From cvc5: regress0/decision/error122.delta01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_ABV, the smallest the script fits, for QF_AUFBV (prune logic)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_ABV)
+(declare-fun v0 () (_ BitVec 16))
+(declare-fun a2 () (Array (_ BitVec 16) (_ BitVec 7)))
+(check-sat-assuming ( (not (distinct v0 ((_ sign_extend 15) (ite (bvult (_ bv0 7) (select (store a2 v0 (_ bv0 7)) (_ bv1 16))) (_ bv1 1) (_ bv0 1))))) ))

@@ -81,3 +81,19 @@ RUN curl -fsSL https://github.com/coursier/coursier/releases/latest/download/cs-
 ENV JAVA_HOME=/opt/java/temurin-25 \
     GRAALVM_HOME=/opt/java/graalvm-25 \
     NATIVE_IMAGE_INSTALLED=true
+
+# gh's login, Codex's state, the shell history and the scratch folder, in
+# volumes that a rebuild keeps (see the mounts of devcontainer.json). The
+# directories are made here, in the home folder, so that a new volume takes
+# their owner, the user, whose uid VS Code then updates to the host user's
+# along with the rest of the home folder.
+# Bash writes each command to the history as it runs, not when it exits: the
+# shells of a stopped container do not exit.
+RUN mkdir -p /home/vscode/.config/gh /home/vscode/.codex /home/vscode/.shell-history /home/vscode/scratch \
+    && chown -R vscode:vscode /home/vscode/.config /home/vscode/.codex /home/vscode/.shell-history /home/vscode/scratch \
+    && printf '%s\n' \
+        '' \
+        '# The history in a volume that a rebuild keeps (see .devcontainer/Dockerfile).' \
+        'export HISTFILE=/home/vscode/.shell-history/bash_history HISTSIZE=100000 HISTFILESIZE=100000' \
+        'PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"' \
+        >> /home/vscode/.bashrc

@@ -2,7 +2,6 @@ package io.bovel.vik
 
 import scala.util.Random
 
-import io.bovel.smtlib.{Constructor, Datatype, Sort}
 import Formula.*
 import Term.*
 
@@ -16,12 +15,12 @@ class UfliaTest extends munit.FunSuite:
 
   def solver(): Solver =
     val s = Solver()
-    for c <- List("x", "y", "z") do s.declare(c, Nil, "Int")
-    s.declare("f", List("Int"), "Int")
-    s.declare("g", List("Int", "Int"), "Int")
-    s.declare("a", Nil, "U")
-    s.declare("b", Nil, "U")
-    s.declare("h", List("Int"), "U")
+    for c <- List("x", "y", "z") do s.declare(c, Nil, Sort.Int)
+    s.declare("f", List(Sort.Int), Sort.Int)
+    s.declare("g", List(Sort.Int, Sort.Int), Sort.Int)
+    s.declare("a", Nil, Sort.Named("U"))
+    s.declare("b", Nil, Sort.Named("U"))
+    s.declare("h", List(Sort.Int), Sort.Named("U"))
     s
 
   def sat(s: Solver, formulas: Formula*): Boolean =
@@ -56,9 +55,9 @@ class UfliaTest extends munit.FunSuite:
     def ls(): Solver =
       val s = Solver()
       s.declare(list)
-      s.declare("l", Nil, "List")
-      s.declare("m", Nil, "List")
-      s.declare("x", Nil, "Int")
+      s.declare("l", Nil, Sort.Named("List"))
+      s.declare("m", Nil, Sort.Named("List"))
+      s.declare("x", Nil, Sort.Int)
       s
     val (l, m, nil) = (Const("l"), Const("m"), Const("nil"))
     def is(c: String, t: Term): Formula = Pred(app(s"(_ is $c)", t))

@@ -12,11 +12,15 @@ import io.bovel.lia
  *  when the e-graph kept them apart — or, for an array, the SMT-LIB form
  *  `(store (store ((as const (Array I E)) d) i v) j w)`: a default `d` and the
  *  indices the problem read or wrote ([[Model.select]], [[Model.store]]).
+ *
+ *  Two values are the same exactly when their normal forms are equal
+ *  ([[Model.normal]]): an array is its default and its other writes, in one
+ *  order, below a constructor and as an index too (#193).
  */
 final case class Model(
     constants: Map[String, Term],
     functions: Map[String, Model.Function],
-    datatypes: List[io.bovel.smtlib.Datatype] = Nil
+    datatypes: List[Datatype] = Nil
 ):
   /** A selector's constructor and position, a tester's constructor. */
   private lazy val constructors: Set[String] = datatypes.flatMap(_.constructors).map(_.name).toSet
@@ -40,7 +44,7 @@ final case class Model(
       functions.get(name) match
         case Some(f) if f.parameters.isEmpty => f.default
         case _ => constants.getOrElse(name, term)
-    case Term.App(Term.Const(name), List(a, i, v)) if name.startsWith("store!") =>
+    case Term.App(Term.Const(name), List(a, i, v)) if Names.isStore(name) =>
       Model.store(value(a), value(i), value(v))
     case Term.App(Term.Const(name), List(arg)) if selectors.contains(name) => // a selector on a constructor value
       val (constructor, i) = selectors(name)
@@ -84,10 +88,46 @@ final case class Model(
    */
   private def lookup(name: String, values: List[Term]): Term = functions.get(name) match
     // Array arguments are compared extensionally: a row keyed by a store read back is one (issue 49).
+    // Without arrays the same values are equal values, and the row is found by its key: a scan of the rows
+    // per application made the check of a model quadratic in the applications of a function.
     case Some(f) =>
-      f.rows.collectFirst { case (a, r) if a.length == values.length && a.zip(values).forall(Model.same) => r }
-        .getOrElse(f.default)
+      val row =
+        if anyArray then
+          f.rows.collectFirst { case (a, r) if a.length == values.length && a.zip(values).forall(same) => r }
+        else f.byArguments.get(values)
+      row.getOrElse(f.default)
     case None => Term.App(Term.Const(name), values)
+
+  /** Whether `value` is a value of `sort`, a sort as the solver knows it: a
+   *  number of a range of the integers lies in the range, and so do the fields
+   *  of a constructor's value, the indices and the elements of an array's. No
+   *  assertion says so (the sort does), hence no assertion found false shows a
+   *  number out of its range: the check of a model asks here.
+   */
+  def ofSort(value: Term, sort: Sort): Boolean = (value, sort) match
+    case (Term.Num(v), Sort.IntRange(lower, upper)) => lower <= v && v <= upper
+    case (Term.App(Term.Const("store"), List(a, i, v)), Sort.Fun(index :: rest, result)) =>
+      ofSort(a, sort) && ofSort(i, index) && ofSort(v, Sort.fun(rest, result))
+    case (Term.App(Term.Const(name), List(d)), Sort.Fun(_ :: rest, result)) if name.startsWith("(as const ") =>
+      ofSort(d, Sort.fun(rest, result))
+    case (Term.App(Term.Const(c), args), Sort.Named(_)) =>
+      fields.get(c).forall(sorts => sorts.length != args.length || args.zip(sorts).forall(ofSort))
+    case _ => true
+
+  /** Whether two values are the same ([[Model.same]]). In a model with no array
+   *  anywhere, a value is its own normal form, and two values are compared as
+   *  they are: looking for an array inside each at every comparison took the
+   *  model check of a Stainless session from 2.4 s to 3.2 s.
+   */
+  def same(a: Term, b: Term): Boolean = a == b || (anyArray && Model.same(a, b))
+
+  private lazy val anyArray: Boolean =
+    datatypes.exists(_.constructors.exists(_.selectors.exists((_, s) => s.arrow.isDefined)))
+      || functions.valuesIterator.exists(f => (f.result :: f.parameters).exists(_.arrow.isDefined))
+      || constants.valuesIterator.exists(Model.isArray)
+
+  private lazy val fields: Map[String, List[Sort]] =
+    (for d <- datatypes; c <- d.constructors yield c.name -> c.selectors.map(_._2)).toMap
 
   /** Whether a formula holds under this model. */
   def holds(formula: Formula): Boolean = formula match
@@ -99,7 +139,7 @@ final case class Model(
     case Formula.Implies(a, b) => !holds(a) || holds(b)
     case Formula.Iff(a, b) => holds(a) == holds(b)
     case Formula.Ite(c, t, e) => if holds(c) then holds(t) else holds(e)
-    case Formula.Eq(l, r) => Model.same(value(l), value(r))
+    case Formula.Eq(l, r) => same(value(l), value(r))
     // Failing closed: a side the model has no number for makes no bound hold (issue 35).
     case Formula.Le(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ <= _)
     case Formula.Less(l, r) => rational(value(l)).zip(rational(value(r))).exists(_ < _)
@@ -120,12 +160,15 @@ object Model:
    *  of its graph (argument values to result value) and the value everywhere
    *  else.
    */
-  final case class Function(parameters: List[String], result: String, rows: List[(List[Term], Term)], default: Term)
+  final case class Function(parameters: List[Sort], result: Sort, rows: List[(List[Term], Term)], default: Term):
+    /** The rows by their arguments, the first of a key as a scan finds it. */
+    lazy val byArguments: Map[List[Term], Term] = rows.reverseIterator.toMap
 
-  /** The array of sort `sort` (as SMT-LIB writes it) holding `default`
-   *  everywhere: `((as const (Array I E)) d)`.
+  /** The array of sort `sort` (the function sort the solver knows it by)
+   *  holding `default` everywhere: `((as const (Array I E)) d)`.
    */
-  def constArray(sort: String, default: Term): Term = Term.App(Term.Const(s"(as const $sort)"), List(default))
+  def constArray(sort: Sort, default: Term): Term =
+    Term.App(Term.Const(s"(as const ${sort.arrayText})"), List(default))
 
   /** `array` with `value` at `index`: `(store array index value)`. */
   def store(array: Term, index: Term, value: Term): Term = Term.App(Term.Const("store"), List(array, index, value))
@@ -145,20 +188,77 @@ object Model:
     case _ => Term.App(array, List(index))
 
   /** An array value as its default and the map of the indices written to a
-   *  value other than it.
+   *  value other than it, all in normal form ([[normal]]).
    */
   def graph(array: Term): (Term, Map[Term, Term]) = array match
     case Term.App(Term.Const("store"), List(a, i, v)) =>
       val (d, m) = graph(a)
-      (d, if same(v, d) then m - i else m.updated(i, v))
-    case Term.App(Term.Const(_), List(d)) => (d, Map.empty)
+      val (index, value) = (normal(i), normal(v))
+      (d, if value == d then m - index else m.updated(index, value))
+    case Term.App(Term.Const(_), List(d)) => (normal(d), Map.empty)
     case _ => (array, Map.empty)
 
-  /** Whether two values are the same: arrays extensionally (their elements
-   *  likewise, for arrays of arrays), the rest as terms.
+  /** Whether two values are the same: equal normal forms. A value without an
+   *  array is its own normal form, and is compared as it is: normalized at
+   *  every comparison, the large datatype values of a Stainless session took
+   *  its model check from 2.4 s to 6.5 s.
    */
-  def same(a: Term, b: Term): Boolean =
-    if isArray(a) && isArray(b) then
-      val ((da, ma), (db, mb)) = (graph(a), graph(b))
-      same(da, db) && ma.keySet == mb.keySet && ma.forall((i, v) => same(v, mb(i)))
-    else a == b
+  def same(a: Term, b: Term): Boolean = a == b || (holdsArray(a) && holdsArray(b) && normal(a) == normal(b))
+
+  private def holdsArray(value: Term): Boolean = isArray(value) ||
+    (value match
+      case Term.App(Term.Const(name), args) if name != "/" => args.exists(holdsArray)
+      case _ => false)
+
+  /** A value in the one form it has among the terms that write it, so that two
+   *  values are the same exactly when their normal forms are equal. An array is
+   *  its default and its writes of other values, in the order of their indices;
+   *  its indices, its elements and a constructor's arguments are normal too, so
+   *  that `(C a)` and `(C (store a 0 1))` are one value when `a` holds 1 at 0
+   *  (#141), and so are two arrays written at those two values (#180).
+   *
+   *  Over a finite index sort with few values, an array is the function it is
+   *  at every index, and its default the element at the first: over `Bool`, "0
+   *  with `true` at 1" and "1 with `false` at 0" are one array, and so are "0
+   *  with `false` at 2 and `true` at 1" and "2 with `true` at 1".
+   */
+  def normal(value: Term): Term =
+    if isArray(value) then
+      val (d, m) = graph(value)
+      val (default, writes) = indexValues(base(value)) match
+        case Some(all) if all.nonEmpty =>
+          // The function over every index, then the element of the first as the default.
+          val first = m.getOrElse(all.head, d)
+          (first, (m ++ all.filterNot(m.contains).map(_ -> d)).filter((_, v) => v != first))
+        case _ => (d, m)
+      writes.toList.sortBy(_._1.toString).foldLeft(Term.App(base(value), List(default)): Term) { case (a, (i, v)) =>
+        store(a, i, v)
+      }
+    else
+      value match
+        case Term.App(f @ Term.Const(name), args) if name != "/" && args.exists(holdsArray) =>
+          Term.App(f, args.map(normal))
+        case _ => value
+
+  /** The head of the constant array at the bottom of an array value, `(as const
+   *  (Array I E))`.
+   */
+  private def base(array: Term): Term = array match
+    case Term.App(Term.Const("store"), List(a, _, _)) => base(a)
+    case Term.App(head, List(_)) => head
+    case _ => array
+
+  /** Every value of a finite index sort that a model writes as an index, when
+   *  there are few: the Booleans, the bit-vectors of up to 8 bits. Read from
+   *  the head of a constant array.
+   */
+  private def indexValues(head: Term): Option[List[Term]] = head match
+    case Term.Const(name) if name.startsWith("(as const (Array ") =>
+      val rest = name.stripPrefix("(as const (Array ")
+      if rest.startsWith("Bool ") then Some(List(Term.Bool(Formula.False), Term.Bool(Formula.True)))
+      else
+        """\(_ IntRange (-?\d+) (-?\d+)\) """.r.findPrefixMatchOf(rest).flatMap { m =>
+          val (lower, upper) = (BigInt(m.group(1).nn), BigInt(m.group(2).nn))
+          Option.when(upper - lower < 256)(List.range(lower, upper + 1).map(Term.Num(_)))
+        }
+    case _ => None

@@ -1,0 +1,6 @@
+; From cvc5: regress0/int2bv2nat-rew-type.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic ALL)
+(set-info :status sat)
+(declare-const x (_ BitVec 20))
+(assert (= ((_ int_to_bv 10) (ubv_to_int x)) #b0101010101))
+(check-sat)

@@ -1,6 +1,6 @@
 ; From z3test: z3name_bug.smt2 (MIT, LICENSES/z3test.txt)
 ; EXPECT: sat
-; EXPECT: ((define-fun p ((x!0 Int)) Bool (ite (= x!0 1) true (ite (= x!0 10) true true))))
+; EXPECT: ((define-fun p ((x!0 Int)) Bool (ite (= x!0 10) true (ite (= x!0 1) true true))))
 ; logic: QF_UFLIA, the smallest the script fits, which set none (prune logic)
 (set-logic QF_UFLIA)
 

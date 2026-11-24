@@ -1,6 +1,5 @@
 package io.bovel.vik
 
-import io.bovel.smtlib.Datatype
 import io.bovel.smtlib.sexpr.SExpr
 
 /** A command of a lowered script: the player's instruction set, over the
@@ -11,7 +10,12 @@ enum Command:
   case SetLogic(logic: String)
   case SetInfo(key: String, value: String)
   case DeclareSort(name: String, arity: Int)
-  case DeclareFun(name: String, argSorts: List[String], sort: String)
+
+  /** `auxiliary`: a bit the lowering introduced to define a bitwise operation,
+   *  not a constant the problem reasons about — the search decides its atoms
+   *  last (see [[Solver.declare]]).
+   */
+  case DeclareFun(name: String, argSorts: List[Sort], sort: Sort, auxiliary: Boolean = false)
   case DeclareDatatypes(datatypes: List[Datatype])
   case Assert(formula: Formula)
 

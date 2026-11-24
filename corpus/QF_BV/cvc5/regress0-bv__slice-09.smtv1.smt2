@@ -1,0 +1,7 @@
+; From cvc5: regress0/bv/core/slice-09.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 6))
+(assert (= ((_ extract 5 2) x) ((_ extract 3 0) x)))
+(check-sat-assuming ( (not (= ((_ extract 5 4) x) ((_ extract 1 0) x))) ))

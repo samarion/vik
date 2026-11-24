@@ -1,0 +1,16 @@
+; Hand-written for VIK (this repository's license): the reproducer from issue 179.
+; EXPECT: sat
+; EXPECT: ((x (mk 1.0)) (y (mk 2.0)) ((distinct x y) true))
+(set-logic QF_UFDTLIRA)
+(set-option :produce-models true)
+(declare-datatype P ((mk (f Real))))
+(declare-const x P)
+(declare-const y P)
+(declare-const r Real)
+(assert (= x (mk r)))
+(assert (> r 0.5))
+(assert (< r 1.5))
+(assert (distinct x y))
+(set-info :status sat)
+(check-sat)
+(get-value (x y (distinct x y)))

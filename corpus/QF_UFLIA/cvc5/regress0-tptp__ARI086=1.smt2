@@ -1,0 +1,8 @@
+; From cvc5: regress0/tptp/ARI086=1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_UFLIA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_UFLIA)
+(set-info :status sat)
+(declare-sort $$unsorted 0)
+(assert (not (= (+ 2 2) 5)))
+(set-info :filename ARI086=1)
+(check-sat-assuming ( true ))

@@ -156,6 +156,59 @@ class SolverTest extends munit.FunSuite:
     val odd = equations(4, List((List((4, 0), (6, 1), (-9, 2)), 0), (List((9, 2), (-6, 3)), 3)))
     assertEquals(odd.check(), Result.Unsat(Set(0, 1, 2, 3)))
 
+  test("a bound is moved onto the lattice the equations leave"):
+    // Two residues of one number modulo 4: n = r + 4k and n + 4 = s + 4j with r and s in [0, 3], and r ≠ s.
+    // The equations make r − s a multiple of 4, and the bounds keep it within 3 of zero. Branch and bound
+    // alone walks k and j, which have no bound (issue 150).
+    val residues = List(
+      Constraint(List((1, 0), (-1, 1), (-4, 2)), true, 0),
+      Constraint(List((1, 0), (-1, 1), (-4, 2)), false, 0),
+      Constraint(List((1, 0), (-1, 3), (-4, 4)), true, -4),
+      Constraint(List((1, 0), (-1, 3), (-4, 4)), false, -4),
+      Constraint(List((1, 1)), false, 0),
+      Constraint(List((1, 1)), true, 3),
+      Constraint(List((1, 3)), false, 0),
+      Constraint(List((1, 3)), true, 3)
+    )
+    def checked(n: Int, constraints: List[Constraint]): Result =
+      val (solver, asserted) = solverOf(n, constraints)
+      assertEquals(asserted, Result.Sat)
+      var steps = 200
+      solver.keepGoing = () =>
+        steps -= 1; steps >= 0
+      solver.check()
+    assertEquals(
+      checked(5, residues :+ Constraint(List((1, 1), (-1, 3)), true, 0, distinct = true)),
+      Result.Unsat((0 to 8).toSet)
+    )
+    // Three bits of a 64-bit number, read two ways: x = 2q + r, q = 4p + b and x = 8t + s, with 2b + r ≠ s.
+    // The quotients are bounded, by 2^61 and more (issue 159).
+    val top = BigInt(1) << 64
+    def within(x: Int, most: BigInt) = List(Constraint(List((1, x)), false, 0), Constraint(List((1, x)), true, most))
+    def equal(terms: List[(BigInt, Int)]) = List(Constraint(terms, true, 0), Constraint(terms, false, 0))
+    val bits =
+      within(0, top - 1) ++ within(1, top / 2 - 1) ++ within(2, 1) ++ within(3, top / 8 - 1) ++ within(4, 3) ++
+        within(5, top / 8 - 1) ++ within(6, 7) ++
+        equal(List((1, 0), (-2, 1), (-1, 2))) ++ equal(List((1, 1), (-4, 3), (-1, 4))) ++
+        equal(List((1, 0), (-8, 5), (-1, 6)))
+    val read = checked(7, bits :+ Constraint(List((2, 4), (1, 2), (-1, 6)), true, 0, distinct = true))
+    assert(read.isInstanceOf[Result.Unsat], read)
+    // A lattice leaves the solutions there are: x = 4k + 1 within [2, 9] is 5 or 9, and 9 once 5 is excluded.
+    val one = List(
+      Constraint(List((1, 0), (-4, 1)), true, 1),
+      Constraint(List((1, 0), (-4, 1)), false, 1),
+      Constraint(List((1, 0)), false, 2),
+      Constraint(List((1, 0)), true, 9)
+    )
+    val (first, firstResult) = solve(2, one)
+    assertEquals(firstResult, Result.Sat)
+    assert(Set(BigInt(5), BigInt(9))(first.value(0)), first.value(0))
+    val (second, secondResult) = solve(2, one :+ Constraint(List((1, 0)), true, 5, distinct = true))
+    assertEquals(secondResult, Result.Sat)
+    assertEquals(second.value(0), BigInt(9))
+    val none = one ++ List(Constraint(List((1, 0)), true, 5, distinct = true), Constraint(List((1, 0)), true, 8))
+    assert(solve(2, none)._2.isInstanceOf[Result.Unsat])
+
   test("the equation check agrees with branch and bound"):
     val rnd = Random(23)
     var refuted = 0
@@ -233,6 +286,24 @@ class SolverTest extends munit.FunSuite:
     solver.check() match
       case Result.Unsat(reasons) => assert(reasons.subsetOf(Set(1, 2, 3, 4)), reasons)
       case other => fail(s"expected unsat, got $other")
+
+  test("branch and bound halves the range of a bounded unknown it slides along"):
+    // Satisfiable, but the vertices are fractional all the way down a 2^32 range: one unit at a time never ends.
+    val top = BigInt(1) << 32
+    val box = (0 until 4).toList.flatMap(x =>
+      List(Constraint(List((1, x)), false, 0), Constraint(List((1, x)), true, top))
+    )
+    val k = box ++ List(
+      Constraint(List((2, 0), (-1, 1), (1, 2), (3, 3)), false, 2), // 2x - y + z + 3w ≥ 2
+      Constraint(List((-2, 0), (2, 1), (-3, 2)), false, top + 1) // -2x + 2y - 3z ≥ 2^32 + 1
+    )
+    val (solver, asserted) = solverOf(4, k)
+    assertEquals(asserted, Result.Sat)
+    var steps = 3000
+    solver.keepGoing = () =>
+      steps -= 1; steps >= 0
+    assertEquals(solver.check(), Result.Sat)
+    assert(k.forall(_.holds(solver.value)))
 
   test("the small-model box turns a sliding branch and bound into a sound unsat"):
     // x even and x odd: integer-infeasible, rationally satisfiable everywhere, and no single

@@ -1,0 +1,7 @@
+; From cvc5: regress0/simplification_bug.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_UF, the smallest the script fits, for QF_SAT (prune logic)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_UF)
+(declare-fun b () Bool)
+(check-sat-assuming ( (and false b) ))

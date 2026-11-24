@@ -1,0 +1,5 @@
+; From cvc5: regress0/arith/leq.01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_LRA)
+(check-sat-assuming ( (<= 3 (- 3)) ))

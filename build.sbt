@@ -198,7 +198,26 @@ lazy val smtlibutils = (project in file("smtlibutils"))
   .settings(
     name := "smtlibutils",
     publish / skip := true, // corpus tooling and tests, not a library
-    libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test
+    libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test,
+    // The tools run in a JVM of their own, from the repository's root like the unforked ones: `ignorestamp`
+    // runs four files at a time, each used to the tests' 2 GB.
+    run / fork := true,
+    run / baseDirectory := (ThisBuild / baseDirectory).value,
+    run / javaOptions += "-Xmx8g"
+  )
+  .settings(forkedTests *)
+
+// What consumes Vik's proofs (JVM only): the driver that writes a certificate as Lean files for `proofs/lean`
+// to check, and the tool that writes those of a corpus (`proofs/runMain io.bovel.vik.proofs.LeanCorpus`).
+lazy val proofs = (project in file("proofs"))
+  .dependsOn(vikJVM)
+  .settings(
+    name := "proofs",
+    publish / skip := true,
+    libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test,
+    run / fork := true,
+    run / baseDirectory := (ThisBuild / baseDirectory).value,
+    run / javaOptions += "-Xmx8g"
   )
   .settings(forkedTests *)
 
@@ -315,7 +334,10 @@ addCommandAlias("site", "docsAssets; unidoc")
 
 // The test suites by platform, one CI job each: the six modules on the JVM with the corpus, then the same six on
 // Scala.js (Node.js, the WebAssembly backend) and on Scala Native (clang). `sbt test` at the root is the JVM rows.
-addCommandAlias("testJVM", "egraph/test; cdclt/test; lia/test; vik/test; smtlib/test; smtlibutils/test")
+addCommandAlias(
+  "testJVM",
+  "egraph/test; cdclt/test; lia/test; vik/test; smtlib/test; smtlibutils/test; proofs/test"
+)
 addCommandAlias("testJS", "egraphJS/test; cdcltJS/test; liaJS/test; vikJS/test; smtlibJS/test")
 addCommandAlias(
   "testNative",
@@ -327,7 +349,7 @@ addCommandAlias(
 addCommandAlias(
   "compileJVM",
   "egraph/Test/compile; cdclt/Test/compile; lia/Test/compile; vik/Test/compile; smtlib/Test/compile; " +
-    "smtlibutils/Test/compile"
+    "smtlibutils/Test/compile; proofs/Test/compile"
 )
 addCommandAlias(
   "compileJS",
@@ -343,12 +365,12 @@ addCommandAlias(
 // the sources), so the projects outside it are named. `formatCheckAll` is CI's format job.
 addCommandAlias(
   "formatAll",
-  "scalafmtAll; scalafmtSbt; bench/scalafmtAll; smtlibutils/scalafmtAll; playground/scalafmtAll; " +
+  "scalafmtAll; scalafmtSbt; bench/scalafmtAll; smtlibutils/scalafmtAll; proofs/scalafmtAll; playground/scalafmtAll; " +
     "docsPlayground/scalafmtAll; graal/scalafmtAll"
 )
 addCommandAlias(
   "formatCheckAll",
-  "scalafmtCheckAll; scalafmtSbtCheck; bench/scalafmtCheckAll; smtlibutils/scalafmtCheckAll; " +
+  "scalafmtCheckAll; scalafmtSbtCheck; bench/scalafmtCheckAll; smtlibutils/scalafmtCheckAll; proofs/scalafmtCheckAll; " +
     "playground/scalafmtCheckAll; docsPlayground/scalafmtCheckAll; graal/scalafmtCheckAll"
 )
 

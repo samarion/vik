@@ -7,7 +7,6 @@ import scala.util.Random
 
 import io.bovel.vik.*
 import org.openjdk.jmh.annotations.*
-import io.bovel.smtlib.{Constructor, Datatype, Sort}
 import io.bovel.vik.Formula.*
 import io.bovel.vik.Solver
 import io.bovel.vik.Term.*
@@ -82,16 +81,16 @@ class AdtBench:
     val s = Solver()
     s.declare(color)
     s.declare(pair)
-    for i <- 0 until n do s.declare(s"p$i", Nil, "Pair")
+    for i <- 0 until n do s.declare(s"p$i", Nil, Sort.Named("Pair"))
     s
 
   private def listSolver(): Solver =
     val s = Solver()
-    s.declare("U", Nil, "U")
+    s.declare("U", Nil, Sort.Named("U"))
     s.declare(list)
     for i <- 0 to n do
-      s.declare(s"l$i", Nil, "List")
-      s.declare(s"a$i", Nil, "U")
+      s.declare(s"l$i", Nil, Sort.Named("List"))
+      s.declare(s"a$i", Nil, Sort.Named("U"))
     s
 
   /** Ten random formula sets over the finite datatypes, `n` formulas each. */

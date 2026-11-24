@@ -1,0 +1,6 @@
+; From cvc5: regress0/issue5144-resetAssertions.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_LIA)
+(set-info :status sat)
+(assert (= 0 1))
+(reset-assertions)
+(check-sat)

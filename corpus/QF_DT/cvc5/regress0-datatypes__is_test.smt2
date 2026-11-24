@@ -1,0 +1,8 @@
+; From cvc5: regress0/datatypes/is_test.smt2 (modified BSD, LICENSES/cvc5.txt)
+; logic: QF_DT, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_DT)
+(set-info :status unsat)
+(declare-datatypes ((Unit 0)) (((u))))
+(declare-fun x () Unit)
+(assert (not ((_ is u) x)))
+(check-sat)

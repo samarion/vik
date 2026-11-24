@@ -1,8 +1,8 @@
 # The Verification Intermediate Kit (VIK)
 
 VIK is a minimal but reasonably fast SMT solver for the theories of uninterpreted functions (UF), algebraic data
-types (ADTs), linear arithmetic over integers and reals (LIA, LRA), extensional arrays, and the arithmetic
-fragment of bit-vectors (BV, lowered to integers), and their combinations. It is designed to be used as a backend for verification tools, and to be easy to understand and to modify.
+types (ADTs), linear arithmetic over integers and reals (LIA, LRA), extensional arrays, and bit-vectors (BV,
+lowered to integers), and their combinations. It is designed to be used as a backend for verification tools, and to be easy to understand and to modify.
 
 ## Design principle
 
@@ -75,7 +75,7 @@ bench/graal.sh                                        # target/graal/vik, the so
 sbt "graal/nativeImageTest; graal/nativeImageTestRun"  # every suite as a native image, run
 ```
 
-The SMT-LIB files used by the tests and the benchmarks are the corpus in [corpus/](corpus/README.md), by logic and origin (SMT-LIB releases, the 2026 submission repository, and the regression suites of cvc5, z3 and princess, with their licenses). The JVM test `CorpusTest` registers one test per file: the answers must be the file's statuses within a fuel (work counted, not timed, so the same on every machine); `corpus/ignore.txt` names the files known to fail, with the reason, and the test asks for a line to be removed when its file passes.
+The SMT-LIB files used by the tests and the benchmarks are the corpus in [corpus/](corpus/README.md), by logic and origin (SMT-LIB releases, the 2026 submission repository, and the regression suites of cvc5, z3 and princess, with their licenses). The JVM test `CorpusTest` registers one test per file: the answers must be the file's statuses within a fuel (work counted, not timed, so the same on every machine), and the model of every `sat` must make the file's assertions true (the session's model-check mode); `corpus/ignore.txt` names the files known to fail, with the reason, and the test asks for a line to be removed when its file passes.
 
 ### Benchmarks
 
@@ -124,7 +124,7 @@ python3 -m http.server --directory target/out/sjs1/scala-3.10.1/playground 8000
 
 - Sarek Høverstad Skotåm. [*CreuSAT: Using Rust and Creusot to create the world's fastest deductively verified SAT solver*](https://www.duo.uio.no/handle/10852/96757) (master's thesis, University of Oslo, 2022) and [CreuSAT](https://github.com/sarsko/CreuSAT) (with Robinson, a verified DPLL solver): the trail as a stack with invariants (reason clauses post-unit with the implied literal first, learned clauses as resolvents keeping the database equisatisfiable, SAT as a complete conflict-free assignment), which `cdclt` follows to stay verifiable.
 - Bruno Dutertre and Leonardo de Moura. [*A Fast Linear-Arithmetic Solver for DPLL(T)*](https://doi.org/10.1007/11817963_11) (CAV 2006): the simplex of `lia`, with the tableau set up once and bounds as the only backtracked state, and its explanations from the bounds of a violated row.
-- Alberto Griggio. [*A Practical Approach to Satisfiability Modulo Linear Integer Arithmetic*](https://doi.org/10.3233/SAT190086) (JSAT 2012): the exact test of the integer equations that `lia` runs before it branches.
+- Alberto Griggio. [*A Practical Approach to Satisfiability Modulo Linear Integer Arithmetic*](https://doi.org/10.3233/SAT190086) (JSAT 2012): the exact test of the integer equations that `lia` runs once branch and bound slides, and the tightening of the bounds by what the solved equations leave of each unknown.
 - Christos H. Papadimitriou. [*On the Complexity of Integer Programming*](https://doi.org/10.1145/322276.322287) (JACM 1981): the small-model bound whose box makes `lia`'s branch and bound a decision procedure for pure integers, fuel allowing.
 - Robert Nieuwenhuis, Albert Oliveras and Cesare Tinelli. [*Solving SAT and SAT Modulo Theories: From an Abstract Davis–Putnam–Logemann–Loveland Procedure to DPLL(T)*](https://doi.org/10.1145/1217856.1217859) (JACM 2006): the CDCL(T) architecture of `cdclt`, whose theory interface follows Z3's `theory` and cvc5's `Theory` (assert literals in trail order, propagate with conflicts and implied literals, explain lazily, push and pop per decision level).
 - Robert Nieuwenhuis and Albert Oliveras. [*Proof-Producing Congruence Closure*](https://doi.org/10.1007/978-3-540-32033-3_33) (RTA 2005): explanations of equalities from a proof forest whose edges carry the equated terms and a reason (an input equality or a congruence).

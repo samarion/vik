@@ -2,8 +2,8 @@
 ; constructor node was an abstract element, which is no datatype value, and a constructor's field invented
 ; by a tester's expansion was valued 0 even where `(not (= x (mk 0)))` forbids it (issue 26, 2026-09-05).
 ; EXPECT: sat
-; EXPECT: ((define-fun q () Q (mk 5)) (define-fun x () Lst (cons 3 (cons 4 nil))) (define-fun y () Lst (cons 1 (cons 2 nil))))
-; EXPECT: ((x (cons 3 (cons 4 nil))) (y (cons 1 (cons 2 nil))) (q (mk 5)) (((_ is cons) x) true) ((n q) 5))
+; EXPECT: ((define-fun q () Q (mk 1)) (define-fun x () Lst (cons 3 (cons 2 nil))) (define-fun y () Lst (cons 5 (cons 4 nil))))
+; EXPECT: ((x (cons 3 (cons 2 nil))) (y (cons 5 (cons 4 nil))) (q (mk 1)) (((_ is cons) x) true) ((n q) 1))
 (set-logic ALL)
 (set-option :produce-models true)
 (declare-datatypes ((Lst 0)) (((nil) (cons (hd Int) (tl Lst)))))

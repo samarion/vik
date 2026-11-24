@@ -1,0 +1,7 @@
+; From cvc5: regress0/simple-lra.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_LRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(check-sat-assuming ( (not (=> (and (> x 0.0) (< (* 2.0 x) y)) (and (> y 0.0) (< x y)))) ))

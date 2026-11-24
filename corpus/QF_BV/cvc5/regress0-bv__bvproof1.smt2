@@ -1,0 +1,5 @@
+; From cvc5: regress0/bv/bvproof1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_BV)
+(set-info :status unsat)
+(declare-const x Bool)
+(check-sat-assuming ((not (bvuge (bvcomp (_ bv0 4) (_ bv0 4)) (ite x (_ bv1 1) (_ bv0 1))))))

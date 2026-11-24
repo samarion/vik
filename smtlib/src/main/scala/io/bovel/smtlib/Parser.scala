@@ -64,7 +64,9 @@ final class Parser:
   private val owner = HashMap.empty[String, String] // a parametric constructor or selector to its datatype
   private val instantiated = scala.collection.mutable.HashSet.empty[String] // datatype instances, by sort text
   private val pending = scala.collection.mutable.ArrayBuffer.empty[Command] // instances' declarations
-  private var sortSubst: Map[String, SExpr] = Map.empty // a template's parameters, while instantiating
+  // A template's parameters, while instantiating, bound to sorts already read: a parameter may be named
+  // like a sort of the script, which it then shadows (issue 152).
+  private var sortSubst: Map[String, Sort] = Map.empty
 
   // A declaration or a definition belongs to the level it was made at and goes with the level's `pop`,
   // unless `:global-declarations` is true (issue 40): one list of undos per open level.
@@ -85,8 +87,11 @@ final class Parser:
   private def push(levels: Int): Unit =
     for _ <- 1 to levels do scopes += scala.collection.mutable.ArrayBuffer.empty
 
+  // A `pop` of more levels than are open is refused whole, by the session, which answers an error for it
+  // (issue 178): nothing is undone here either.
   private def pop(levels: Int): Unit =
-    for _ <- 1 to (levels min scopes.length) do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
+    if levels <= scopes.length then
+      for _ <- 1 to levels do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
 
   // `(exit)` ends the script: what follows is not read (issue 52), as z3 and cvc5 stop there.
   private var exited = false
@@ -97,6 +102,7 @@ final class Parser:
       val commands = command(s)
       val out = pending.toList ++ commands
       pending.clear()
+      wellFounded(out.collect { case Command.DeclareDatatypes(datatypes) => datatypes }.flatten)
       out
   })
 
@@ -104,10 +110,12 @@ final class Parser:
     case SList(SSymbol("set-logic") :: SSymbol(logic) :: Nil) => List(Command.SetLogic(logic))
     case SList(SSymbol("set-info") :: SKeyword(key) :: value :: Nil) => List(Command.SetInfo(s":$key", value.toString))
     case SList(SSymbol("declare-sort") :: SSymbol(name) :: SNumeral(arity) :: Nil) =>
+      newSorts(List(name))
       undoable(declaredSorts, name)
       declaredSorts(name) = index(arity)
       List(Command.DeclareSort(name, index(arity)))
     case SList(SSymbol("declare-sort") :: SSymbol(name) :: Nil) =>
+      newSorts(List(name))
       undoable(declaredSorts, name)
       declaredSorts(name) = 0
       List(Command.DeclareSort(name, 0))
@@ -116,9 +124,14 @@ final class Parser:
       sortParameters += name
       Nil
     case SList(SSymbol("define-sort") :: SSymbol(name) :: SList(params) :: body :: Nil) =>
+      val names = params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad parameter $other") }
+      // The body is read where the definition is made, before its name exists, as z3 and cvc5 read it: a
+      // body that leads back to the name would expand without end at each use (issue 177).
+      if leadsTo(body, names.toSet, name, Set.empty) then
+        throw Smt2Error(s"unknown sort $name in its own definition (define-sort $name)")
+      newSorts(List(name))
       undoable(sortDefinitions, name)
-      sortDefinitions(name) =
-        (params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad parameter $other") }, body)
+      sortDefinitions(name) = (names, body)
       Nil
     case SList(SSymbol("declare-fun") :: SSymbol(name) :: SList(args) :: s :: Nil) => declare(name, args, s)
     case SList(SSymbol("define-const") :: SSymbol(name) :: s :: body :: Nil) => // a `define-fun` of no parameter
@@ -126,14 +139,17 @@ final class Parser:
     case SList(SSymbol("declare-const") :: SSymbol(name) :: s :: Nil) => declare(name, Nil, s)
     case SList(SSymbol("declare-datatype") :: SSymbol(name) ::
           SList(SSymbol("par") :: SList(params) :: SList(constructors) :: Nil) :: Nil) =>
+      newSorts(List(name))
       template(name, params, constructors)
       Nil
     case SList(SSymbol("declare-datatype") :: SSymbol(name) :: SList(constructors) :: Nil) =>
+      newSorts(List(name))
       List(declareDatatypes(List((name, constructors))))
     case SList(SSymbol("declare-datatypes") :: SList(names) :: SList(declarations) :: Nil)
         if names.exists { case SList(_ :: SNumeral(n) :: Nil) if n == 0 => false; case _ => true } =>
       // Parametric: each declaration is `(par (params) (constructors))`, a template instantiated on use.
       // A monomorphic member is named up front: an earlier member's field may mention it.
+      newSorts(names.collect { case SList(SSymbol(name) :: _) => name })
       for case SList(SSymbol(name) :: SNumeral(n) :: Nil) <- names if n == 0 do
         undoable(datatypeNames, name)
         datatypeNames += name
@@ -148,7 +164,7 @@ final class Parser:
                 SList(SSymbol(name) :: SNumeral(_) :: Nil),
                 SList(constructors)
               ) => // a monomorphic member of the group
-            command(SList(List(SSymbol("declare-datatype"), SSymbol(name), SList(constructors)))).foreach(pending += _)
+            pending += declareDatatypes(List((name, constructors)))
           case other => throw Smt2Error(s"bad datatype declaration $other")
       Nil
     case SList(SSymbol("declare-datatypes") :: SList(names) :: SList(declarations) :: Nil) =>
@@ -158,6 +174,7 @@ final class Parser:
       }
       if sorts.length != declarations.length then
         throw Smt2Error("declare-datatypes: as many declarations as sorts expected")
+      newSorts(sorts)
       List(declareDatatypes(sorts.zip(declarations.map {
         case SList(constructors) => constructors
         case other => throw Smt2Error(s"bad constructor list $other")
@@ -193,7 +210,11 @@ final class Parser:
       List(Command.CheckSatAssuming(assumptions.map(assertion)))
     case SList(SSymbol("check-sat") :: assumptions) => // z3's shorthand
       List(Command.CheckSatAssuming(assumptions.map(assertion)))
-    case SList(SSymbol("reset-assertions") :: Nil) => List(Command.ResetAssertions)
+    case SList(SSymbol("reset-assertions") :: Nil) =>
+      // The levels go, and the declarations made in them stay, as the session keeps them: their undos go
+      // unrun (issue 178).
+      scopes.clear()
+      List(Command.ResetAssertions)
     case SList(SSymbol("reset") :: Nil) =>
       functions.clear()
       macros.clear()
@@ -280,6 +301,30 @@ final class Parser:
   private def free(name: String): Unit =
     if Parser.reserved(name) then throw Smt2Error(s"$name: a reserved word; pick another name")
     if instanceSymbols(name) then throw Smt2Error(s"$name: the symbol of an instance; pick another name")
+    unused(name)
+
+  /** Refuses a function symbol the script has already, as SMT-LIB asks of a
+   *  declaration: the second would replace the first. A constructor `a` of two
+   *  datatypes belonged to the second alone, and the first, left with no
+   *  constructor of its own, had one value where it has many (issue 230).
+   */
+  private def unused(name: String): Unit =
+    if functions.contains(name) || macros.contains(name) || polymorphic.contains(name) then
+      throw Smt2Error(s"$name: a symbol declared twice")
+
+  /** Refuses datatypes with a constructor or a selector named like a symbol of
+   *  the script, or two of them named alike (`constructors`: the ones of every
+   *  datatype the command declares). Within one datatype, [[distinct]] has
+   *  refused two constructors and two selectors of one name before.
+   */
+  private def newSymbols(constructors: List[SExpr]): Unit =
+    val names = constructors.flatMap {
+      case SList(SSymbol(constructor) :: selectors) =>
+        constructor :: selectors.collect { case SList(SSymbol(selector) :: _) => selector }
+      case _ => Nil
+    }
+    names.foreach(unused)
+    for name <- names.diff(names.distinct).headOption do throw Smt2Error(s"$name: a symbol declared twice")
 
   private def declare(name: String, args: List[SExpr], s: SExpr): List[Command] =
     free(name)
@@ -371,7 +416,7 @@ final class Parser:
               undoable(instanceSymbols, instanceName)
               instanceSymbols += instanceName
               val saved = sortSubst
-              sortSubst = params.zip(actual).toMap
+              sortSubst = params.zip(actualSorts).toMap
               try
                 poly match
                   case Poly.Fun(_, as, r) =>
@@ -403,10 +448,11 @@ final class Parser:
     if args.length != params.length then throw Smt2Error(s"$name takes ${params.length} sort arguments")
     val text = s"($name ${args.map(_.text).mkString(" ")})"
     if !instantiated(text) then
+      regular(name)
       undoable(instantiated, text)
       instantiated += text
       val saved = sortSubst
-      sortSubst = params.zip(args.map(sexprOf)).toMap
+      sortSubst = params.zip(args).toMap
       try
         val datatype = Datatype(
           text,
@@ -435,12 +481,71 @@ final class Parser:
       finally sortSubst = saved
     Sort.Named(text)
 
+  /** Refuses to instantiate a non-regular datatype (issue 151): one whose
+   *  instance needs an instance of itself at a larger sort, as `(N T)` with a
+   *  field `(N (Pair T T))` does, and which has instances without end. The
+   *  parameters flow from datatype to datatype through the fields: where a
+   *  field of `a` mentions `(b s1 … sn)`, a parameter of `a` that occurs in
+   *  `si` flows to the i-th parameter of `b`, and it grows on the way when `si`
+   *  is more than the parameter itself. The instances that `name` needs are
+   *  without end exactly when one of its parameters reaches a flow that grows
+   *  and that leads back to where it starts. A field at an instance written in
+   *  full, `(N (Pair Int Int))`, or at the parameters in another order, grows
+   *  nothing and is regular.
+   *
+   *  The check is the one of the .NET runtime on generic types: ECMA-335,
+   *  Common Language Infrastructure, Partition II, section 9.2, "Generics and
+   *  recursive inheritance graphs". Its instantiation closure is finite exactly
+   *  when its graph has no cycle with an expanding edge; the flows here are its
+   *  edges, a growing flow its expanding edge. Kennedy and Pierce call such
+   *  types expansive ("On Decidability of Nominal Subtyping with Variance",
+   *  FOOL/WOOD 2007). The datatypes it refuses are the nested datatypes of Bird
+   *  and Meertens ("Nested Datatypes", MPC 1998, LNCS 1422,
+   *  doi:10.1007/BFb0054285).
+   */
+  private def regular(name: String): Unit =
+    type Parameter = (String, Int) // of a parametric datatype, by its position
+    val flows: List[(Parameter, Parameter, Boolean)] =
+      for
+        (a, (params, constructors)) <- templates.toList
+        case SList(_ :: selectors) <- constructors
+        case SList(_ :: s :: Nil) <- selectors
+        case SList(SSymbol(b) :: args) <- parts(unfolded(s)) if templates.contains(b)
+        (arg, i) <- args.zipWithIndex
+        (p, j) <- params.zipWithIndex if mentions(arg, p)
+      yield ((a, j), (b, i), arg != SSymbol(p))
+    def reached(from: Set[Parameter]): Set[Parameter] =
+      val more = from ++ flows.collect { case (source, target, _) if from(source) => target }
+      if more == from then from else reached(more)
+    val mine = reached(templates(name)._1.indices.map((name, _)).toSet)
+    for case (source, target, true) <- flows if mine(source) && reached(Set(target))(source) do
+      throw Smt2Error(
+        s"${source._1}: a non-regular datatype, which needs itself at ever larger sorts, is not supported"
+      )
+
+  /** A sort as written, and the sorts written inside it. */
+  private def parts(s: SExpr): List[SExpr] = s match
+    case SList(items) => s :: items.flatMap(parts)
+    case _ => List(s)
+
+  /** A sort as written, with its `define-sort` abbreviations of some parameters
+   *  replaced by what they stand for.
+   */
+  private def unfolded(s: SExpr): SExpr = s match
+    case SList(SSymbol(name) :: args) if sortDefinitions.get(name).exists(_._1.length == args.length) =>
+      val (params, body) = sortDefinitions(name)
+      unfolded(substitute(body, params.zip(args).toMap))
+    case SList(items) => SList(items.map(unfolded))
+    case _ => s
+
   /** Declares datatypes: their constructors, selectors and testers become
    *  function symbols (a constructor `C` of datatype `D` with selectors
    *  `(s_i S_i)` is `C : S_1 ... S_n -> D`, `s_i : D -> S_i` and the tester
    *  `(_ is C)` : `D -> Bool`).
    */
   private def declareDatatypes(declarations: List[(String, List[SExpr])]): Command =
+    for (name, constructors) <- declarations do distinct(name, constructors)
+    newSymbols(declarations.flatMap(_._2))
     for (name, _) <- declarations do // named first: the fields read below may mention them, and instantiate
       undoable(datatypeNames, name)
       datatypeNames += name
@@ -464,6 +569,54 @@ final class Parser:
     datatypes.foreach(fields)
     Command.DeclareDatatypes(datatypes)
 
+  /** Refuses a command that names a sort like one the script has already, or
+   *  two of its own sorts alike, as z3 and cvc5 do (issue 176): the second
+   *  declaration would replace the first, whose constructors then belong to no
+   *  datatype, and a script with no assertion was `unsat`. The names are the
+   *  script's: `Int` is free to declare in a logic without the integers.
+   */
+  private def newSorts(names: List[String]): Unit =
+    val taken = names.find(name =>
+      declaredSorts.contains(name) || datatypeNames(name) || templates.contains(name)
+        || sortDefinitions.contains(name)
+    )
+    for name <- taken.orElse(names.diff(names.distinct).headOption) do
+      throw Smt2Error(s"$name: a sort declared twice")
+
+  /** Refuses a datatype that declares a constructor or a selector twice, as z3
+   *  and cvc5 do (issue 146): the second declaration would replace the first, a
+   *  selector `f` of two constructors being one function symbol here.
+   */
+  private def distinct(datatype: String, constructors: List[SExpr]): Unit =
+    val names = constructors.collect { case SList(SSymbol(constructor) :: _) => constructor }
+    val selectors = constructors.collect { case SList(_ :: fields) => fields }.flatten
+      .collect { case SList(SSymbol(selector) :: _) => selector }
+    for name <- names.diff(names.distinct).headOption do
+      throw Smt2Error(s"$name: a constructor declared twice in the datatype $datatype")
+    for name <- selectors.diff(selectors.distinct).headOption do
+      throw Smt2Error(s"$name: a selector declared twice in the datatype $datatype")
+
+  /** Refuses datatypes that are not well-founded, as SMT-LIB asks and as z3 and
+   *  cvc5 do (issue 147): a datatype has values only if one of its constructors
+   *  takes fields that all have some. `datatypes` are the ones a command
+   *  declared, with the instances of parametric datatypes it made — a
+   *  parametric datatype is judged there, instance by instance. The sorts
+   *  declared before have values, and so the least fixpoint is over these: the
+   *  datatypes left once no other can be given a value have none. An array has
+   *  values when its indices and its elements do, which is the rule of the two.
+   */
+  private def wellFounded(datatypes: List[Datatype]): Unit =
+    def without(open: List[Datatype]): List[Datatype] =
+      val names = open.map(_.name).toSet
+      def inhabited(s: Sort): Boolean = s match
+        case Sort.Named(name) => !names(name)
+        case Sort.Array(index, element) => inhabited(index) && inhabited(element)
+        case _ => true
+      val rest = open.filterNot(_.constructors.exists(_.selectors.forall((_, s) => inhabited(s))))
+      if rest.length == open.length then open else without(rest)
+    for datatype <- without(datatypes).headOption do
+      throw Smt2Error(s"the datatype ${datatype.name} is not well-founded: none of its constructors has a value")
+
   /** Makes a datatype's constructors, selectors and testers known. */
   private def register(datatype: Datatype): Unit =
     val d = Sort.Named(datatype.name)
@@ -485,6 +638,8 @@ final class Parser:
    */
   private def template(name: String, params: List[SExpr], constructors: List[SExpr]): Unit =
     val ps = params.map { case SSymbol(p) => p; case other => throw Smt2Error(s"bad sort parameter $other") }
+    distinct(name, constructors)
+    newSymbols(constructors)
     undoable(templates, name)
     templates(name) = (ps, constructors)
     val self = SList(SSymbol(name) :: ps.map(SSymbol(_)))
@@ -507,7 +662,7 @@ final class Parser:
         case other => throw Smt2Error(s"bad constructor $other")
 
   private def sort(s: SExpr): Sort = s match
-    case SSymbol(name) if sortSubst.contains(name) => sort(sortSubst(name))
+    case SSymbol(name) if sortSubst.contains(name) => sortSubst(name)
     case SSymbol(name) if sortDefinitions.get(name).exists(_._1.isEmpty) => sort(sortDefinitions(name)._2)
     case SList(SSymbol(name) :: args) if sortDefinitions.contains(name) =>
       val (params, body) = sortDefinitions(name)
@@ -531,6 +686,18 @@ final class Parser:
         throw Smt2Error(s"the sort $name takes ${declaredSorts(name)} sort arguments")
       Sort.Named(s"($name ${args.map(sort(_).text).mkString(" ")})")
     case other => Sort.Named(other.toString) // rejected by `check` where a symbol is declared
+
+  /** Whether the sort written `body`, where the names in `bound` are
+   *  parameters, leads to the sort `name`: names it, or names a `define-sort`
+   *  whose body does, through any number of them (`seen`: the ones followed).
+   */
+  private def leadsTo(body: SExpr, bound: Set[String], name: String, seen: Set[String]): Boolean = body match
+    case SSymbol(s) if bound(s) => false
+    case SSymbol(s) if s == name => true
+    case SSymbol(s) =>
+      !seen(s) && sortDefinitions.get(s).exists((params, b) => leadsTo(b, params.toSet, name, seen + s))
+    case SList(items) => items.exists(leadsTo(_, bound, name, seen))
+    case _ => false
 
   /** Whether the script declared the sort `name`: a sort, a datatype, or an
    *  instance of a sort constructor or of a parametric datatype.

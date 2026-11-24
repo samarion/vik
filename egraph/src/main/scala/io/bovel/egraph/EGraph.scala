@@ -41,14 +41,54 @@ trait Rules:
   ): Unit = ()
 
   /** A global condition on the closure, checked at the theory's final check:
-   *  the reasons of a conflict, if any.
+   *  the equalities that hold and violate it together, if any (see
+   *  [[EGraph.contradiction]]).
    */
-  def finalCheck(eg: EGraph): Option[ArrayBuffer[Int]] = None
+  def finalCheck(eg: EGraph): Option[Seq[(EClassId, EClassId)]] = None
 
   def push(): Unit = ()
   def pop(): Unit = ()
 
 object NoRules extends Rules
+
+/** A proof that the terms of two e-classes are equal, read off the union tree
+ *  of an [[EGraph]] (see [[EGraph.prove]]): from the equalities asserted
+ *  (`Given`, with their reasons), by reflexivity, symmetry, transitivity, and
+ *  congruence of the applications of two classes (`Cong`, from the equality of
+ *  their functions and of their arguments), and by the rules (`Rule`, from the
+ *  premises of [[EGraph.derive]]).
+ */
+enum EqProof:
+  case Refl(a: EClassId)
+  case Given(a: EClassId, b: EClassId, reason: Int)
+  case Symm(p: EqProof)
+  case Trans(p: EqProof, q: EqProof)
+  case Cong(a: EClassId, b: EClassId, fun: EqProof, args: ArraySeq[EqProof])
+  case Rule(a: EClassId, b: EClassId, premises: ArraySeq[EqProof])
+
+  def lhs: EClassId = this match
+    case Refl(a) => a
+    case Given(a, _, _) => a
+    case Symm(p) => p.rhs
+    case Trans(p, _) => p.lhs
+    case Cong(a, _, _, _) => a
+    case Rule(a, _, _) => a
+
+  def rhs: EClassId = this match
+    case Refl(a) => a
+    case Given(_, b, _) => b
+    case Symm(p) => p.lhs
+    case Trans(_, q) => q.rhs
+    case Cong(_, b, _, _) => b
+    case Rule(_, b, _) => b
+
+/** Why the graph is inconsistent, with proofs (see [[EGraph.conflictProof]]):
+ *  the two sides of the disequality asserted for `reason` are equal, or the
+ *  equalities a rule raised a contradiction on hold.
+ */
+enum EConflict:
+  case Disequal(proof: EqProof, reason: Int)
+  case Contradiction(proofs: ArraySeq[EqProof])
 
 /** The internal types of [[EGraph]]. */
 object EGraph:
@@ -201,7 +241,43 @@ final class EGraph(rules: Rules = NoRules):
    *  contradiction raised by a rule; the graph is inconsistent from then on.
    */
   private var violated: Diseq | Null = null
-  private var contradicted: ArrayBuffer[Int] | Null = null
+  private var contradicted: Seq[(EClassId, EClassId)] | Null = null
+
+  /** For a client that indexes facts about pairs of ids by id, such as the
+   *  equality atoms of a theory, and sets `touchedLimit`: ids such that any two
+   *  ids that became equal or disequal since [[takeTouched]] last listed them
+   *  have one of the two in the list. A merge lists the ids of the class it
+   *  absorbs, which it repoints anyway; a new disequality between two classes,
+   *  asserted or carried over by a merge, lists the ids of the smaller one.
+   *  Nothing is listed past `touchedLimit` ids: the client then looks at all of
+   *  its facts. A [[pop]] takes no id off the list.
+   */
+  private val touched = ArrayBuffer.empty[EClassId]
+  private var touchedOverflow = false
+  var touchedLimit: Int = -1 // negative: nobody watches
+
+  /** The ids touched, or `null` when there were more than `touchedLimit`. The
+   *  list is the e-graph's own: the caller reads it, then clears it.
+   */
+  def takeTouched(): ArrayBuffer[EClassId] | Null =
+    val overflow = touchedOverflow
+    touchedOverflow = false
+    if overflow then
+      touched.clear()
+      null
+    else touched
+
+  private def touch(id: EClassId): Unit =
+    if touched.length >= touchedLimit then touchedOverflow = true
+    else touched += id
+
+  private def touchSmaller(a: EClassId, b: EClassId): Unit =
+    val root = if size(a) <= size(b) then a else b
+    touch(root)
+    var m = next(root)
+    while m != root && !touchedOverflow do
+      touch(m)
+      m = next(m)
 
   /** Merges done since the last [[rebuild]], to report to the rules. */
   private val merges = ArrayBuffer.empty[Merge]
@@ -346,6 +422,7 @@ final class EGraph(rules: Rules = NoRules):
       addForbid(ra, d)
       addForbid(rb, d)
       if recording then trail += Undo.Disequated(ra, rb)
+      if touchedLimit >= 0 then touchSmaller(ra, rb)
 
   private def addForbid(root: EClassId, d: Diseq): Unit =
     val list = forbid(root)
@@ -391,13 +468,32 @@ final class EGraph(rules: Rules = NoRules):
   def conflict: Option[ArrayBuffer[Int]] =
     val v = violated
     val c = contradicted
-    if v != null then Some(explain(v.a, v.b) += v.reason) else if c != null then Some(c) else None
+    if v != null then Some(explain(v.a, v.b) += v.reason) else if c != null then Some(explainAll(c)) else None
 
-  /** Raised by a rule: the graph is inconsistent for these reasons. */
-  def contradiction(reasons: ArrayBuffer[Int]): Unit =
+  /** The inconsistency of [[conflict]], with proofs. */
+  def conflictProof: Option[EConflict] =
+    val v = violated
+    val c = contradicted
+    if v != null then Some(EConflict.Disequal(prove(v.a, v.b), v.reason))
+    else if c != null then Some(EConflict.Contradiction(proveAll(c)))
+    else None
+
+  /** Raised by a rule: the equalities `holding`, which hold, are inconsistent
+   *  together; their explanations are the reasons of the conflict.
+   */
+  def contradiction(holding: Seq[(EClassId, EClassId)]): Unit =
     if violated == null && contradicted == null then
-      contradicted = reasons
+      contradicted = holding
       if recording then trail += Undo.Violated
+
+  /** The reasons of all the equalities of `pairs`, which hold. */
+  def explainAll(pairs: Seq[(EClassId, EClassId)]): ArrayBuffer[Int] =
+    val out = ArrayBuffer.empty[Int]
+    for (x, y) <- pairs do out ++= explain(x, y)
+    out.distinct
+
+  /** The proofs of all the equalities of `pairs`, which hold. */
+  def proveAll(pairs: Seq[(EClassId, EClassId)]): ArraySeq[EqProof] = ArraySeq.from(pairs.map(prove))
 
   /** Merges `a` and `b` for a rule whose premises are the given equalities,
    *  which must hold before the call: their paths in the union tree then
@@ -432,7 +528,7 @@ final class EGraph(rules: Rules = NoRules):
     }
 
   /** The rules' global check (see [[Rules.finalCheck]]). */
-  def finalCheck(): Option[ArrayBuffer[Int]] = rules.finalCheck(this)
+  def finalCheck(): Option[Seq[(EClassId, EClassId)]] = rules.finalCheck(this)
 
   /** All e-classes (one per equivalence class) with the distinct applications
    *  added to them.
@@ -472,8 +568,11 @@ final class EGraph(rules: Rules = NoRules):
     repr(from) = into
     var m = next(from)
     var k = 0
+    val watched = touchedLimit >= 0
+    if watched then touch(from)
     while m != from do
       repr(m) = into
+      if watched then touch(m)
       if members != null then
         members(k) = m
         k += 1
@@ -483,6 +582,14 @@ final class EGraph(rules: Rules = NoRules):
     next(from) = next(into)
     next(into) = t
     size(into) += size(from)
+
+    if watched && fromForbid != null then
+      var i = 0
+      while i < fromForbid.length && !touchedOverflow do
+        val d = fromForbid(i)
+        val other = if repr(d.a) == into then repr(d.b) else repr(d.a)
+        if other != into then touchSmaller(into, other)
+        i += 1
 
     // Only the parents of the absorbed class need re-canonicalization.
     val fromUses = uses(from)
@@ -556,6 +663,24 @@ final class EGraph(rules: Rules = NoRules):
 
   private def explainInto(x: EClassId, y: EClassId, out: ArrayBuffer[Int]): Unit =
     if x == y then return
+    connect(x, y)
+    val edge = connecting.nn
+    val onPathX = connectingOnX
+    // It equated `edge.a`, then in the absorbed class (the side of `x` iff the edge is on its path), with `edge.b`.
+    val (l, r) = if onPathX then (edge.a, edge.b) else (edge.b, edge.a)
+    explainInto(x, l, out)
+    justify(edge, out)
+    explainInto(r, y, out)
+
+  /** Sets [[connecting]] to the merge that connected `x` and `y`, distinct and
+   *  equal: the most recent edge on their paths to their lowest common ancestor
+   *  in the union tree, and [[connectingOnX]] to whether it is on the path of
+   *  `x` (fields, not a pair: no allocation per edge of an explanation).
+   */
+  private var connecting: Edge | Null = null
+  private var connectingOnX = false
+
+  private def connect(x: EClassId, y: EClassId): Unit =
     // The lowest common ancestor of `x` and `y` in the union tree: mark the ancestors of `x`, climb from `y`.
     stamp += 1
     if visited.length < count then visited = new Array[Int](repr.length)
@@ -588,11 +713,44 @@ final class EGraph(rules: Rules = NoRules):
         edge = e
         onPathX = false
       u = e.into
-    // It equated `edge.a`, then in the absorbed class (the side of `x` iff the edge is on its path), with `edge.b`.
-    val (l, r) = if onPathX then (edge.a, edge.b) else (edge.b, edge.a)
-    explainInto(x, l, out)
-    justify(edge, out)
-    explainInto(r, y, out)
+    connecting = edge
+    connectingOnX = onPathX
+
+  /** A proof of `x = y`, which hold, built as [[explain]] reads the reasons:
+   *  each edge is proved once, and shared where it is used again. For proofs
+   *  only: nothing is recorded for them beforehand.
+   */
+  def prove(x: EClassId, y: EClassId): EqProof =
+    require(repr(x) == repr(y), "prove: the two terms are not equal")
+    proveInto(x, y, java.util.IdentityHashMap())
+
+  private def proveInto(x: EClassId, y: EClassId, done: java.util.IdentityHashMap[Edge, EqProof]): EqProof =
+    if x == y then EqProof.Refl(x)
+    else
+      connect(x, y)
+      val edge = connecting.nn
+      val onPathX = connectingOnX
+      var step = done.get(edge)
+      if step == null then
+        step = proveEdge(edge, done)
+        done.put(edge, step)
+      val (l, r, middle) = if onPathX then (edge.a, edge.b, step.nn) else (edge.b, edge.a, EqProof.Symm(step.nn))
+      trans(trans(proveInto(x, l, done), middle), proveInto(r, y, done))
+
+  private def trans(p: EqProof, q: EqProof): EqProof = (p, q) match
+    case (EqProof.Refl(_), _) => q
+    case (_, EqProof.Refl(_)) => p
+    case _ => EqProof.Trans(p, q)
+
+  /** A proof of `edge.a = edge.b`. */
+  private def proveEdge(edge: Edge, done: java.util.IdentityHashMap[Edge, EqProof]): EqProof = edge.why match
+    case Justification.Asserted(reason) => EqProof.Given(edge.a, edge.b, reason)
+    case Justification.Congruence(n1, n2) =>
+      val args = ArraySeq.tabulate(n1.app.args.length)(i => proveInto(n1.app.args(i), n2.app.args(i), done))
+      val p = EqProof.Cong(n1.cls, n2.cls, proveInto(n1.app.fun, n2.app.fun, done), args)
+      if n1.cls == edge.a then p else EqProof.Symm(p)
+    case Justification.Rule(premises) =>
+      EqProof.Rule(edge.a, edge.b, ArraySeq.from(premises.map((x, y) => proveInto(x, y, done))))
 
   /** Adds to `out` the reasons behind an edge: its own reason, or, for a
    *  congruence, the reasons making the two applications' functions and

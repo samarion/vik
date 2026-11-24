@@ -102,6 +102,49 @@ class SessionTest extends munit.FunSuite:
     assertEquals(s.checkSat(), Some(true))
   }
 
+  test("a popped datatype does not constrain a sort of its name (issue 144)") {
+    // The encoder of the first check knew `D` as a datatype of two values, and kept it past the pop.
+    val s = Session()
+    s.run("(push 1) (declare-datatype D ((A) (B))) (declare-const w D)")
+    assertEquals(s.checkSat(), Some(true))
+    s.run("(pop 1) (declare-sort D 0) (declare-const x D) (declare-const y D) (declare-const z D)")
+    s.run("(assert (distinct x y z))")
+    assertEquals(s.checkSat(), Some(true))
+    // The constructors' names too, declared again as constants of that sort: no longer distinct values.
+    s.run("(declare-const A D) (declare-const B D) (assert (= A B))")
+    assertEquals(s.checkSat(), Some(true))
+  }
+
+  test("a pop of more levels than are open is an error, and changes nothing (issue 178)") {
+    def run(script: String) = Session.run(s2.Parser.parse(script))
+    assertEquals(
+      run("(declare-const x Int) (pop 1) (assert (> x 0)) (check-sat)"),
+      List(
+        "(error \"pop 1: the stack depth is 0\")",
+        "sat"
+      )
+    )
+    // `reset-assertions` drops the levels: there is none left to pop.
+    assertEquals(
+      run("(declare-const x Int) (push 1) (assert (> x 0)) (reset-assertions) (pop 1) (check-sat)"),
+      List(
+        "(error \"pop 1: the stack depth is 0\")",
+        "sat"
+      )
+    )
+    // Refused whole: the level stays open, with its declaration and its assertion.
+    assertEquals(
+      run("(declare-const x Int) (push 1) (declare-const y Int) (assert (< y 0)) (pop 2) (assert (> y 0)) (check-sat)"),
+      List("(error \"pop 2: the stack depth is 1\")", "unsat")
+    )
+    // Through the API too.
+    val s = Session()
+    assertEquals(s.run("(pop 1)"), List("(error \"pop 1: the stack depth is 0\")"))
+    s.pop()
+    s.run("(declare-const z Int)")
+    assertEquals(s.checkSat(), Some(true))
+  }
+
   test("exit ends the script") {
     // What follows is not read, not even parsed (issue 52).
     val s = Session()

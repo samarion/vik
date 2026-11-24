@@ -1,0 +1,18 @@
+; From smtinterpol: proof/auxaxioms/array_store.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+
+(set-logic QF_AX)
+(declare-sort U 0)
+(declare-fun i () U)
+(declare-fun j () U)
+(declare-fun v () U)
+(declare-fun a () (Array U U))
+(assert (= i j))
+(assert (not (= (select (store a i v) j) v)))
+
+(set-info :status unsat)
+(check-sat)
+(set-option :print-terms-cse false)
+(get-proof)

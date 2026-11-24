@@ -1,0 +1,20 @@
+; From smtinterpol: proof/auxaxioms/or_neg.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :produce-proofs true)
+(set-option :proof-check-mode true)
+(set-option :model-check-mode true)
+
+(set-logic QF_UF)
+(declare-fun p () Bool)
+(declare-fun q () Bool)
+(declare-fun r () Bool)
+
+(assert (or (not (or p q)) r))
+(assert p)
+(assert (not r))
+;(@tautology (! (or (or p q) (not p)) :or+))
+
+(set-info :status unsat)
+(check-sat)
+(set-option :print-terms-cse false)
+(get-proof)

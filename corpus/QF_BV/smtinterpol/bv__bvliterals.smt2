@@ -1,0 +1,33 @@
+; From smtinterpol: bv/bvliterals.smt2 (LGPL-3.0, LICENSES/smtinterpol.txt)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-17; its `set-option` and `get-` commands left out, z3 refusing SMTInterpol's options)
+(set-option :print-success false)
+(set-option :produce-proofs true)
+(set-option :produce-models true)
+(set-logic QF_BV)
+
+(declare-const a (_ BitVec 32))
+(declare-const b (_ BitVec 8))
+
+(push 1)
+(assert (= a #x0000ffff))
+(set-info :status sat)
+(check-sat)
+(get-model)
+
+(assert (not (= a (_ bv65535 32))))
+(set-info :status unsat)
+(check-sat)
+(get-proof)
+(pop 1)
+
+(push 1)
+(assert (= b #b00010110))
+(set-info :status sat)
+(check-sat)
+(get-model)
+
+(assert (not (= b (_ bv22 8))))
+(set-info :status unsat)
+(check-sat)
+(get-proof)
+(pop 1)

@@ -1,0 +1,8 @@
+; From cvc5: regress0/bv/bv-term-small-rw-228.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_BV)
+(set-info :status unsat)
+(declare-fun s () (_ BitVec 32))
+(declare-fun t () (_ BitVec 32))
+(assert (not (= (bvadd s (bvneg (bvadd s s))) (bvneg s))))
+(check-sat)
+(exit)

@@ -1,0 +1,10 @@
+; From cvc5: regress0/proofs/bv-mul-pow2-neg-middle.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: unsat
+; logic: QF_BV, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_BV)
+(declare-fun b () (_ BitVec 4))
+(declare-fun c () (_ BitVec 4))
+(assert (= (bvmul b #b1110 c) (bvmul b c)))
+(assert (not (= (bvmul b c) #b0000)))
+(set-info :status unsat)
+(check-sat)

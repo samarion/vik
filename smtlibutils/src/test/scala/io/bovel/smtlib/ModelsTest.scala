@@ -47,7 +47,7 @@ class ModelsTest extends munit.FunSuite:
       val asserted = scala.collection.mutable.ArrayBuffer.empty[Formula]
       for command <- script.commands do
         command match
-          case Command.DeclareFun(name, argSorts, sort) => solver.declare(name, argSorts, sort)
+          case Command.DeclareFun(name, argSorts, sort, auxiliary) => solver.declare(name, argSorts, sort, auxiliary)
           case Command.DeclareDatatypes(ds) => ds.foreach(solver.declare)
           case Command.Assert(f) =>
             solver.assert(f)

@@ -1,0 +1,6 @@
+; From cvc5: regress1/issue8958-bv2nat-lazy.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic ALL)
+(set-info :status sat)
+(declare-const a (_ BitVec 1))
+(assert (= (_ bv0 32) ((_ int_to_bv 32) (ubv_to_int ((_ zero_extend 7) a)))))
+(check-sat)

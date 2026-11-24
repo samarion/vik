@@ -74,11 +74,15 @@ with the others bounds each `yᵢ`. That propagation costs a factor of two to fo
 is decisive on the instances of the library — `fft` goes from seventeen seconds to under one, `nec-smt` from
 a timeout to under two.
 
-The [combination with uninterpreted functions](uninterpreted-functions.md) is an arrangement decided by the
-SAT solver: for every pair of shared integer terms that congruence could relate, their equality atom is an
-atom of both theories — a merge or a disequality for the e-graph, two bounds for the simplex when true,
-and when false a clause between the two sides, `a ≤ b − 1` or `a ≥ b + 1`, each a bound atom the SAT
-solver decides (its first decision the side the relaxation already satisfies, so it moves nothing; the
-simplex branching on the disequality itself, without learning, was three times slower on `wisas`). Both
-theories are stably infinite, so a model of both, on the same arrangement, is a model of the combination
-(Nelson and Oppen).
+The [combination with uninterpreted functions](uninterpreted-functions.md) is model-based (de Moura and
+Bjørner, 2008). When the search finds a candidate, a final check reads the candidate's model: every e-class
+of numbers must have one value in the simplex, and every function must give one result for equal argument
+values. Where the model disagrees, the check adds the equality atom between two shared terms that would
+settle it, and the search goes on. The same check covers the arrays and the datatype values, which are
+compared by their values in the model. An equality atom between numbers is an atom of both theories. It is
+a merge or a disequality for the e-graph. For the simplex it is two bounds when true, and when false a
+clause between the two sides, `a ≤ b − 1` or `a ≥ b + 1`, each a bound atom the SAT solver decides. Its
+first decision is the side the relaxation already satisfies, so it moves nothing, and the simplex branching
+on the disequality itself, without learning, was three times slower on `wisas`. Before the final check,
+every pair of shared terms that congruence could relate had its equality atom from the start (Nelson and
+Oppen), which made the atoms quadratic in the shared terms.

@@ -1,0 +1,10 @@
+; From cvc5: regress0/preprocess/preprocess_11.cvc.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; logic: QF_LRA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_LRA)
+(set-option :incremental false)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(assert (and (and (and (= 0.0 (ite true x 1.0)) (= 0.0 (ite (= x 0.0) 0.0 1.0))) (= x (ite true y 0.0))) (= 0.0 (ite true 0.0 0.0))))
+(set-info :status sat)
+(check-sat)

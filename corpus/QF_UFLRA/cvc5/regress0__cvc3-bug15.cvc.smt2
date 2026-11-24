@@ -1,0 +1,13 @@
+; From cvc5: regress0/cvc3-bug15.cvc.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: unsat
+; logic: QF_UFLRA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_UFLRA)
+(set-option :incremental false)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(declare-fun f (Real) Real)
+(assert (=> (> x y) (> (f x) (f y))))
+(assert (= x 3.0))
+(assert (= y 2.0))
+(set-info :status unsat)
+(check-sat-assuming ( (not (> (f x) (f y))) ))

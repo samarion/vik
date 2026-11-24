@@ -1,0 +1,7 @@
+; From cvc5: regress0/bv/core/extract-concat-6.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status unsat)
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 32))
+(declare-fun y () (_ BitVec 32))
+(check-sat-assuming ( (not (= ((_ extract 29 2) (concat x y)) ((_ extract 29 2) y))) ))

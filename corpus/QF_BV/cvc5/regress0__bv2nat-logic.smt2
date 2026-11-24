@@ -1,0 +1,7 @@
+; From cvc5: regress0/bv2nat-logic.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_BVLIA)
+(set-info :status sat)
+(declare-fun x () (_ BitVec 4))
+(declare-fun y () Int)
+(assert (not (= (ubv_to_int x) y)))
+(check-sat)

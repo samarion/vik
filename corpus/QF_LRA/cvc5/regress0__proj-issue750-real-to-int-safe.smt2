@@ -1,0 +1,10 @@
+; From cvc5: regress0/proj-issue750-real-to-int-safe.smt2 (modified BSD, LICENSES/cvc5.txt)
+; EXPECT: sat
+; logic: QF_LRA, the smallest the script fits, for ALL (prune logic)
+(set-option :check-proofs true)
+(set-logic QF_LRA)
+(set-option :solve-real-as-int true)
+(declare-const x Real)
+(assert (= 0.0 x))
+(set-info :status sat)
+(check-sat)

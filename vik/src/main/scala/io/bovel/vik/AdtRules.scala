@@ -4,7 +4,6 @@ import scala.collection.immutable.ArraySeq
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 
 import io.bovel.egraph.{App, EClassId, EGraph, Rules}
-import io.bovel.smtlib.{Constructor, Datatype}
 
 /** Algebraic datatypes as rules of the e-graph (Barrett, Shikanian and Tinelli
  *  2007). The encoder registers the classes of the constructor, selector and
@@ -89,7 +88,7 @@ final class AdtRules extends Rules:
   /** Two constructor nodes in one class: injectivity or a contradiction. */
   private def meet(eg: EGraph, a: Node, b: Node): Unit =
     if a.fun == b.fun then for i <- a.args.indices do eg.derive(a.args(i), b.args(i), List((a.cls, b.cls)))
-    else eg.contradiction(eg.explain(a.cls, b.cls))
+    else eg.contradiction(List((a.cls, b.cls)))
 
   override def merged(
       eg: EGraph,
@@ -126,7 +125,7 @@ final class AdtRules extends Rules:
         testers.get(fun).foreach { constructor =>
           if constructor == node.fun then eg.derive(cls, trueClass, List((app.args(0), node.cls)))
           else if eg.find(cls) == eg.find(trueClass) then
-            eg.contradiction(eg.explain(cls, trueClass) ++ eg.explain(app.args(0), node.cls))
+            eg.contradiction(List((cls, trueClass), (app.args(0), node.cls)))
         }
 
   /** The tester `app` (in class `cls`) of `constructor` holds: `t` has that
@@ -143,22 +142,23 @@ final class AdtRules extends Rules:
       else
         val fields = selectorClasses.map(s => eg.add(App(s, ArraySeq(t))))
         eg.derive(t, eg.add(App(constructor, fields)), premises)
-    else if node.fun != constructor then eg.contradiction(eg.explain(cls, trueClass) ++ eg.explain(t, node.cls))
+    else if node.fun != constructor then eg.contradiction(List((cls, trueClass), (t, node.cls)))
 
   /** Acyclicity: a depth-first search over the classes with a constructor node,
    *  following the arguments; a class on the current path reached again is a
-   *  cycle, explained by the equalities along it.
+   *  cycle, explained by the equalities along it: each node's argument is the
+   *  next node.
    */
-  override def finalCheck(eg: EGraph): Option[ArrayBuffer[Int]] =
+  override def finalCheck(eg: EGraph): Option[Seq[(EClassId, EClassId)]] =
     val state = HashMap.empty[EClassId, Int] // 1 on the path, 2 done
     val path = ArrayBuffer.empty[(EClassId, Node)]
-    def visit(rep: EClassId): Option[ArrayBuffer[Int]] =
+    def visit(rep: EClassId): Option[Seq[(EClassId, EClassId)]] =
       val node = nodes.getOrElse(rep, null)
       if node == null then None
       else
         state(rep) = 1
         path += ((rep, node))
-        var found: Option[ArrayBuffer[Int]] = None
+        var found: Option[Seq[(EClassId, EClassId)]] = None
         val args = node.args.iterator
         while found.isEmpty && args.hasNext do
           val arg = args.next()
@@ -166,13 +166,12 @@ final class AdtRules extends Rules:
           state.getOrElse(r, 0) match
             case 1 =>
               val cycle = path.drop(path.indexWhere(_._1 == r))
-              val reasons = ArrayBuffer.empty[Int]
+              val holding = ArrayBuffer.empty[(EClassId, EClassId)]
               for ((c, n), i) <- cycle.zipWithIndex do
-                reasons ++= eg.explain(n.cls, c) // the node is in the class
                 val next = cycle((i + 1) % cycle.length)._2
                 val argOfN = n.args.find(a => eg.find(a) == cycle((i + 1) % cycle.length)._1).get
-                reasons ++= eg.explain(argOfN, next.cls) // its argument is in the next class
-              found = Some(reasons.distinct)
+                holding += ((argOfN, next.cls)) // its argument is the next node
+              found = Some(holding.toList)
             case 0 => found = visit(r)
             case _ => ()
         path.remove(path.length - 1)

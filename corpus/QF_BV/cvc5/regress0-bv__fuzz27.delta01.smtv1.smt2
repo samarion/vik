@@ -1,0 +1,6 @@
+; From cvc5: regress0/bv/fuzz27.delta01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_BV)
+(declare-fun v0 () (_ BitVec 4))
+(check-sat-assuming ( (let ((_let_0 (ite (bvslt v0 (_ bv0 4)) (_ bv1 1) (_ bv0 1)))) (distinct (bvneg _let_0) (bvnot _let_0))) ))

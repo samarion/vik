@@ -173,3 +173,33 @@ class SolverTest extends munit.FunSuite:
     assertEquals(sat(2, clauses, SplitTheory(2, Set(true, false))), None)
     // The variables up to the split are added too.
     assertEquals(sat(2, clauses, SplitTheory(5, Set(true))).get.length, 6)
+
+  /** Records the variables in the order the solver assigns them. */
+  class OrderTheory extends Theory:
+    val order = ArrayBuffer.empty[Var]
+    def assertLit(lit: Lit): Unit = order += lit.variable
+    def propagate(): Theory.Result = Theory.ok
+    def explain(lit: Lit): ArrayBuffer[Lit] = throw IllegalArgumentException("implies nothing")
+    def push(): Unit = ()
+    def pop(): Unit = ()
+
+  test("deferred variables are decided last"):
+    for deferred <- Seq(Set(0, 1), Set(2, 3), Set(1, 2), Set(0, 1, 2, 3)) do
+      val theory = OrderTheory()
+      val s = Solver(4, theory)
+      deferred.foreach(s.defer)
+      assert(s.solve().isInstanceOf[Solver.Result.Sat])
+      // No clause: every assignment is a decision.
+      assertEquals(theory.order.toSet, Set(0, 1, 2, 3))
+      assertEquals(theory.order.takeRight(deferred.size).toSet, deferred)
+
+  test("a deferred variable is still propagated"):
+    val theory = OrderTheory()
+    val s = Solver(3, theory)
+    s.defer(0)
+    s.addClause(Lit(1, false), Lit(0))
+    s.addClause(Lit(1), Lit(0))
+    s.addClause(Lit(0, false), Lit(2, false))
+    s.solve() match
+      case Solver.Result.Sat(model) => assert(model(0) && !model(2))
+      case other => fail(s"expected sat, got $other")

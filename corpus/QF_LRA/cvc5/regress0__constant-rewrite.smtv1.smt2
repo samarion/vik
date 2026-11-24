@@ -1,0 +1,6 @@
+; From cvc5: regress0/constant-rewrite.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_LRA)
+(declare-fun v0 () Real)
+(check-sat-assuming ( (and (not (<= v0 0.0)) (not (= (= v0 0.0) (= v0 (/ 1 2))))) ))

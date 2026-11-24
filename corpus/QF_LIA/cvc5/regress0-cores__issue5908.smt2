@@ -1,0 +1,28 @@
+; From cvc5: regress0/cores/issue5908.smt2 (modified BSD, LICENSES/cvc5.txt)
+; COMMAND-LINE: -i
+; EXPECT: sat
+; EXPECT: sat
+; EXPECT: unsat
+; logic: QF_LIA, the smallest the script fits, for ALL (prune logic)
+(set-logic QF_LIA)
+(declare-fun a () Int)
+(declare-fun b () Int)
+(declare-fun c () Int)
+(declare-fun d () Int)
+(declare-fun e () Int)
+(declare-fun f () Int)
+(assert (<= 0 a))
+(assert (= 0 c))
+(assert (not (= a b)))
+(assert (= b c))
+(assert (not (= d f)))
+(set-info :status sat)
+(check-sat)
+(push)
+(set-info :status sat)
+(check-sat)
+(pop)
+(assert (> e a))
+(assert (= e 0))
+(set-info :status unsat)
+(check-sat)

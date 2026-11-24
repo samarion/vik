@@ -27,7 +27,7 @@ what the bit-level operations cost is search, not completeness.
 ```
 
 Supported: `bvadd`, `bvsub`, `bvneg`, `bvnot`, `bvmul`,
-`bvshl`, `bvlshr`, `bvashr`, `bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`, `bvsmod`, `bvmul`, `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor` and
+`bvshl`, `bvlshr`, `bvashr`, `bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`, `bvsmod`, `bvand`, `bvor`, `bvxor`, `bvnand`, `bvnor`, `bvxnor` and
 `bvcomp` of anything, `concat`, `extract`, `zero_extend`, `sign_extend`, `repeat`, `rotate_left`, `rotate_right`, the
 unsigned and the signed comparisons, equality, the literals `#b…`, `#x…`, `(_ bvN w)`, and the integer
 conversions of SMT-LIB 2.7 — `ubv_to_int`, `sbv_to_int`, `(_ int_to_bv n)`, with the pre-renaming spellings
@@ -56,9 +56,13 @@ Where bits are needed, VIK is a bit-blaster with a small SAT solver behind a sim
 
 ## Internals
 
-Every bit-vector term becomes an integer with its range asserted, every declared sort becomes `Int`
-(a field, an argument, a result, an array's index and element as much as a constant), and every
-operation becomes its arithmetic image (`io.bovel.vik.Lowering`), with fresh bounded constants where
+Every bit-vector term becomes an integer, and every operation becomes its arithmetic image
+(`io.bovel.vik.Lowering`). A sort `(_ BitVec n)` becomes the sort of the integers from `0` to `2ⁿ − 1`
+(`Sort.IntRange` in the solver, which knows the range and nothing of the operations), and the solver
+gives that range to every term of the sort — a constant at its declaration, an
+application, a field or a read of an array when it first meets the term, the terms it makes itself among
+them (the reads at the index where two arrays differ, the fields of a datatype value). The range is what
+the sort says, not an assertion: no `pop` takes it back. The operations get fresh bounded constants where
 the modulus or a division needs them — each fresh constant is declared and defined by one linear
 equation before the assertion that uses it, and once per distinct operation at a level: the second
 `bvmul 4 (bvadd 1 x)` of a script reuses the constants of the first (two chains of constants for one
@@ -108,9 +112,11 @@ term are equal only by an integer argument over `2ⁿ`, which branch and bound w
 The parser reads bit-vector terms as they are written — the tree has them (`Term.BvApp`, `Term.Bits`) —
 and the lowering is one function of the solver, `io.bovel.vik.Lowering`: it takes a script and returns
 the lowered script, declaring the constants each assertion needs and asserting their definitions before
-it, so the script that VIK plays is a `QF_LIA` script. The player applies it before playing. Two
-ways to see it: `(get-assertions)` in a script answers with the lowered assertion stack, and
-`sbt "vik/runMain io.bovel.vik.lower file.smt2"` prints a whole file as VIK will play it.
+it, so the assertions that VIK plays are linear integer arithmetic. The player applies it before playing.
+Two ways to see it: `(get-assertions)` in a script answers with the lowered assertion stack, and
+`sbt "vik/runMain io.bovel.vik.lower file.smt2"` prints a whole file as VIK will play it. One thing there
+is not SMT-LIB's, which has no sort for a range of the integers: a bit-vector constant is declared at
+`(_ IntRange 0 255)`, say, the range the solver holds it to.
 
 ```smt2
 (set-logic QF_BV)
@@ -121,10 +127,10 @@ ways to see it: `(get-assertions)` in a script answers with the lowered assertio
 (get-assertions)
 ```
 
-The answer is the ranges of `x` and `y` and the comparison, lowered — `bvult` is `<` on the values,
-written `x + 1 ≤ y`:
+The answer is the comparison, lowered — `bvult` is `<` on the values, written `x + 1 ≤ y`. The ranges of
+`x` and `y` are their sort's, and no assertion:
 
 ```
 sat
-((and (<= 0 x) (<= x 255)) (and (<= 0 y) (<= y 255)) (<= (+ x 1) y))
+((<= (+ x 1) y))
 ```

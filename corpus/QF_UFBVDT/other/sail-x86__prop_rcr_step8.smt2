@@ -1,0 +1,17 @@
+; origin: sail-x86 (https://github.com/shina-lab/sail-x86, commit 1829cb6e), a Sail specification of x86-64: the query Sail generated for the property `prop_rcr_step8` of its proofs (`proofs/prop_rcl_rcr.sail`), unsat when the property holds
+; original path: proofs/prop_rcr_step8.smt2, as written there but for this header, the logic and the status
+; license: MIT, LICENSES/sail-x86.txt (Copyright (c) 2026 Rui Ueyama)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-18)
+(set-logic QF_UFBVDT)
+(declare-datatypes ((Unit 0)) (((unit))))
+(declare-datatypes ((Bits 0)) (((Bits (len (_ BitVec 8)) (contents (_ BitVec 64))))))
+(declare-datatypes ((Zexception 0)) (((z__dummy_exnz3 (unz__dummy_exnz3 Unit)))))
+(declare-const zz4104/1 (_ BitVec 8))
+(declare-const zz4105/1 (_ BitVec 1))
+(define-const zz4106/2 (_ BitVec 8) zz4104/1)
+(define-const zz4108/2 (_ BitVec 1) zz4105/1)
+(define-const zz4122/2 (_ BitVec 9) (concat zz4106/2 zz4108/2))
+(define-const zz4121/2 (_ BitVec 9) (bvor (bvlshr zz4122/2 #b000000001) (bvshl zz4122/2 #b000001000)))
+(assert (or (not (= (concat zz4108/2 ((_ extract 7 1) zz4106/2)) ((_ extract 8 1) zz4121/2))) (not (= ((_ extract 0 0) zz4106/2) ((_ extract 0 0) zz4121/2)))))
+(set-info :status unsat)
+(check-sat)

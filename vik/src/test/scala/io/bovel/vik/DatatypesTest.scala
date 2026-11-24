@@ -85,3 +85,66 @@ class DatatypesTest extends munit.FunSuite:
       List("unsat")
     )
   }
+
+  test("an array field read through its selector is the constructor's array"):
+    // The e-graph equates `(arr (C a))` with `a`, but the two were never a pair of arrays to share, so
+    // their reads stayed two unrelated integers for the arithmetic solver, and these were sat (issue 134).
+    def run(text: String) = Session.run(Parser.parse(s"""
+      (declare-datatype D ((C (arr (Array Int Int)))))
+      (declare-const a (Array Int Int)) (declare-const b (Array Int Int)) (declare-const x D)
+      (declare-const i Int) (declare-const j Int)
+      $text
+      (check-sat)"""))
+    assertEquals(run("(assert (not (= (select (arr (C a)) 0) (select a 0))))"), List("unsat"))
+    assertEquals(run("(assert (= x (C a))) (assert (< (select (arr x) 0) (select a 0)))"), List("unsat"))
+    assertEquals(
+      run("(assert (<= i j)) (assert (<= j i)) (assert (not (= (select (arr (C a)) i) (select a j))))"),
+      List("unsat")
+    )
+    assertEquals(run("(assert (not (= (select (arr (C a)) 0) (select b 0))))"), List("sat"))
+
+  test("distinct classes of an infinite datatype get distinct values"):
+    // The fields a tester's expansion invents had one default value each, and so had the terms over
+    // them: `x = y = (s z)` against the `distinct` (issue 127).
+    def run(text: String) = Session.run(Parser.parse(s"$text (check-sat)"), checkModels = true)
+    assertEquals(
+      run("""
+        (declare-datatype N ((z) (s (p N))))
+        (declare-const x N) (declare-const y N) (declare-const w N)
+        (assert ((_ is s) x)) (assert ((_ is s) y)) (assert ((_ is s) w))
+        (assert (distinct x y w))"""),
+      List("sat")
+    )
+    assertEquals(
+      run("""
+        (declare-datatypes ((Unit 0) (L 0)) (((unit)) ((nil) (cons (hd Unit) (tl L)))))
+        (declare-const x1 L) (declare-const x2 L) (declare-const x3 L)
+        (assert ((_ is cons) x1)) (assert ((_ is cons) x2)) (assert ((_ is cons) x3))
+        (assert (distinct x1 x2 x3))"""),
+      List("sat")
+    )
+    // Infinite through the `Int` of `P`, with no field of its own sort.
+    assertEquals(
+      run("""
+        (declare-datatypes ((P 0) (W 0) (V 0)) (((p (n Int))) ((w (g P)) (e)) ((v (f W)))))
+        (declare-const x V) (declare-const y V)
+        (assert (distinct x y))"""),
+      List("sat")
+    )
+    // A function that differs on two fields of one term, both free.
+    assertEquals(
+      run("""
+        (declare-datatype T ((leaf) (node (l T) (r T))))
+        (declare-fun size (T) Int) (declare-const t T)
+        (assert ((_ is node) t)) (assert ((_ is node) (l t))) (assert ((_ is node) (r t)))
+        (assert (< (size (l t)) (size (r t))))"""),
+      List("sat")
+    )
+    // Two datatypes through each other, and a constructor term valued after a free one.
+    assertEquals(
+      run("""
+        (declare-datatypes ((A 0) (B 0)) (((a (sa B))) ((e1) (e2 (se2 A)))))
+        (declare-const x1 A) (declare-const x2 B) (declare-const x3 A)
+        (assert (distinct x1 (a x2))) (assert (distinct x2 (e2 x3)))"""),
+      List("sat")
+    )

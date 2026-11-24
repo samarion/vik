@@ -1,0 +1,16 @@
+; origin: sail-x86 (https://github.com/shina-lab/sail-x86, commit 1829cb6e), a Sail specification of x86-64: the query Sail generated for the property `prop_sf_bit_identity` of its proofs (`proofs/prop_bmi_flags.sail`), unsat when the property holds
+; original path: proofs/prop_sf_bit_identity.smt2, as written there but for this header, the logic and the status
+; license: MIT, LICENSES/sail-x86.txt (Copyright (c) 2026 Rui Ueyama)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-18)
+(set-logic QF_UFBVDT)
+(declare-datatypes ((Unit 0)) (((unit))))
+(declare-datatypes ((Bits 0)) (((Bits (len (_ BitVec 8)) (contents (_ BitVec 64))))))
+(declare-datatypes ((Zexception 0)) (((z__dummy_exnz3 (unz__dummy_exnz3 Unit)))))
+(declare-const zz40/1 (_ BitVec 1))
+(define-const zz41/2 (_ BitVec 1) zz40/1)
+(declare-const zz49/1 (_ BitVec 1))
+(define-const zz411/2 Bool (= (= zz41/2 #b1) true))
+(define-const zz413/2 Bool (= (= zz41/2 #b1) false))
+(assert (or (and (or zz413/2 zz411/2) (not zz411/2) (or zz411/2 (not zz413/2))) (not (= (ite (and (not zz413/2) (not zz411/2)) zz49/1 (ite zz411/2 #b1 #b0)) zz41/2))))
+(set-info :status unsat)
+(check-sat)

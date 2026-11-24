@@ -1,0 +1,18 @@
+; origin: sail-x86 (https://github.com/shina-lab/sail-x86, commit 1829cb6e), a Sail specification of x86-64: the query Sail generated for the property `prop_cmovcc_8` of its proofs (`proofs/prop_cmovcc.sail`), unsat when the property holds
+; original path: proofs/prop_cmovcc_8.smt2, as written there but for this header, the logic and the status
+; license: MIT, LICENSES/sail-x86.txt (Copyright (c) 2026 Rui Ueyama)
+; statuses: the `unknown` ones answered by Z3 version 4.14.0 (statusstamp, 2026-11-18)
+(set-logic QF_UFBVDT)
+(declare-datatypes ((Unit 0)) (((unit))))
+(declare-datatypes ((Bits 0)) (((Bits (len (_ BitVec 8)) (contents (_ BitVec 64))))))
+(declare-datatypes ((Zexception 0)) (((z__dummy_exnz3 (unz__dummy_exnz3 Unit)))))
+(declare-const zz40/1 (_ BitVec 8))
+(declare-const zz41/1 (_ BitVec 8))
+(declare-const zz42/1 (_ BitVec 1))
+(define-const zz43/2 (_ BitVec 8) zz40/1)
+(define-const zz45/2 (_ BitVec 8) zz41/1)
+(define-const zz47/2 (_ BitVec 1) zz42/1)
+(define-const zz423/2 (_ BitVec 8) (bvsub #x00 (concat #b0000000 zz47/2)))
+(assert (not (= (ite (= zz47/2 #b1) zz43/2 zz45/2) (bvor (bvand zz43/2 zz423/2) (bvand zz45/2 (bvnot zz423/2))))))
+(set-info :status unsat)
+(check-sat)

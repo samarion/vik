@@ -56,8 +56,8 @@ class UfliaBench:
 
   private def solver(): Solver =
     val s = Solver()
-    for i <- 0 until n do s.declare(s"x$i", Nil, "Int")
-    s.declare("f", List("Int"), "Int")
+    for i <- 0 until n do s.declare(s"x$i", Nil, Sort.Int)
+    s.declare("f", List(Sort.Int), Sort.Int)
     s
 
   @Benchmark

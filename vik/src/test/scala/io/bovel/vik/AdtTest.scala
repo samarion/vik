@@ -2,7 +2,6 @@ package io.bovel.vik
 
 import scala.util.Random
 
-import io.bovel.smtlib.{Constructor, Datatype, Sort}
 import Formula.*
 import Term.*
 
@@ -21,9 +20,9 @@ class AdtTest extends munit.FunSuite:
 
   def listSolver(): Solver =
     val s = Solver()
-    s.declare("U", Nil, "U")
-    for c <- List("a", "b", "c") do s.declare(c, Nil, "U")
-    for l <- List("l", "m", "n") do s.declare(l, Nil, "List")
+    s.declare("U", Nil, Sort.Named("U"))
+    for c <- List("a", "b", "c") do s.declare(c, Nil, Sort.Named("U"))
+    for l <- List("l", "m", "n") do s.declare(l, Nil, Sort.Named("List"))
     s.declare(list)
     s
 
@@ -87,12 +86,42 @@ class AdtTest extends munit.FunSuite:
       val s = Solver()
       s.declare(unit)
       s.declare(option)
-      for x <- List("x", "y", "z") do s.declare(x, Nil, "Opt")
+      for x <- List("x", "y", "z") do s.declare(x, Nil, Sort.Named("Opt"))
       s
     val (x, y, z) = (Const("x"), Const("y"), Const("z"))
     assert(sat(solver(), x !== y))
     assert(!sat(solver(), x !== y, y !== z, x !== z)) // only two values: none and some(u)
     assert(!sat(solver(), x !== Const("none"), y !== Const("none"), x !== y))
+
+  test("a field of a finite sort under an infinite sort has finitely many values (issue 125)"):
+    // `Val` is infinite through `U`; its `of-Unit` values are one, its `of-Bool` and `of-Opt` values two
+    // and three. The tester's expansion invents the fields, which no term of the problem names.
+    val unit = Datatype("Unit", List(Constructor("u", Nil)))
+    val option =
+      Datatype("Opt", List(Constructor("none", Nil), Constructor("some", List(("value", Sort.Bool)))))
+    val value = Datatype(
+      "Val",
+      List(
+        Constructor("of-U", List(("to-U", Sort.Named("U")))),
+        Constructor("of-Unit", List(("to-Unit", Sort.Named("Unit")))),
+        Constructor("of-Bool", List(("to-Bool", Sort.Bool))),
+        Constructor("of-Opt", List(("to-Opt", Sort.Named("Opt"))))
+      )
+    )
+    val names = List("x", "y", "z", "w")
+    def apart(c: String, n: Int): Boolean =
+      val s = Solver()
+      s.declare("U", Nil, Sort.Named("U"))
+      for d <- List(unit, option, value) do s.declare(d)
+      for x <- names do s.declare(x, Nil, Sort.Named("Val"))
+      val some = names.take(n).map(Const(_))
+      sat(s, (some.map(is(c, _)) ++ (for (x, i) <- some.zipWithIndex; y <- some.drop(i + 1) yield x !== y))*)
+    assert(!apart("of-Unit", 2))
+    assert(apart("of-Bool", 2))
+    assert(!apart("of-Bool", 3))
+    assert(apart("of-Opt", 3))
+    assert(!apart("of-Opt", 4))
+    assert(apart("of-U", 4))
 
   /** Random formulas over `Color = red | green | blue` and
    *  `Pair = mk(fst: Color, snd: Color)`, decided by brute force over the 9 × 9
@@ -157,9 +186,9 @@ class AdtTest extends munit.FunSuite:
       val s = Solver()
       s.declare(color)
       s.declare(pair)
-      s.declare("p", Nil, "Pair")
-      s.declare("q", Nil, "Pair")
-      s.declare("c", Nil, "Color")
+      s.declare("p", Nil, Sort.Named("Pair"))
+      s.declare("q", Nil, Sort.Named("Pair"))
+      s.declare("c", Nil, Sort.Named("Color"))
       assertEquals(sat(s, f), expected, s"round $round: $f")
       if expected then sats += 1
     assert(sats > 30 && sats < 170, sats)

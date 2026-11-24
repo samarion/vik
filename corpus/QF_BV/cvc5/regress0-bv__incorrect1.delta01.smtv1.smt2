@@ -1,0 +1,5 @@
+; From cvc5: regress0/bv/incorrect1.delta01.smtv1.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-option :incremental false)
+(set-info :status sat)
+(set-logic QF_BV)
+(check-sat-assuming ( (bvult (bvsmod (_ bv0 9) ((_ sign_extend 4) (_ bv29 5))) (_ bv1 9)) ))

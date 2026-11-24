@@ -1,8 +1,8 @@
 package io.bovel.vik
 
-import scala.collection.mutable.{ArrayBuffer, HashMap}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 
-import io.bovel.smtlib.{ArithOp, BvCmpOp, BvOp, Sort}
+import io.bovel.smtlib.{ArithOp, BvCmpOp, BvOp}
 import io.bovel.smtlib as s2
 import Formula.*
 import Term.*
@@ -16,39 +16,54 @@ import Term.*
  *      their uses;
  *    - `+`, `-` and `*` by a literal become the linear normal form; rational
  *      literals and divisions become defined `Real` constants; `div`, `mod`,
- *      `abs` and nonlinear multiplication are rejected;
+ *      `abs` and nonlinear multiplication are rejected
+ *      ([[io.bovel.smtlib.Unsupported]]);
  *    - chained `=`, `distinct` and comparisons become pairwise bounds on
  *      numbers and bit-vectors, equalities and disequalities elsewhere;
  *    - a term-level `ite` becomes a fresh constant with two defining assertions
  *      placed before the assertion using it;
  *    - `select` is application, `store` an application of the array sort's
- *      `store!N` symbol, which the solver's array lemmas recognize;
- *    - bit-vectors go to linear integer arithmetic: an `n`-bit term is an `Int`
- *      in `[0, 2^n)`, a declaration an `Int` declaration with its range
- *      asserted, and each operation a linear relation between its arguments,
- *      its result and fresh bounded integers — `bvadd` and friends through an
- *      overflow count `k` (`value = r + 2^n × k`), divisions, shifts and
- *      extractions through `x = d × q + r`, the signed comparisons and
- *      `sign_extend` through the sign bit (`x = u + 2^(n−1) × s`).
- *      Multiplication, division and shifts by a variable, and the other bitwise
- *      operations would need bit-blasting: rejected
- *      ([[io.bovel.smtlib.Unsupported]]).
+ *      `.store!N` symbol, which the solver's array lemmas recognize;
+ *    - bit-vectors go to linear integer arithmetic: an `n`-bit term is an
+ *      integer in `[0, 2^n)`, a sort `(_ BitVec n)` the sort of that range
+ *      ([[Sort.IntRange]], whose terms the solver holds to it: no range is
+ *      asserted here), and each operation a linear relation between its
+ *      arguments, its result and fresh bounded integers — `bvadd` and friends
+ *      through an overflow count `k` (`value = r + 2^n × k`), divisions, shifts
+ *      and extractions by a constant through `x = d × q + r`, the signed
+ *      comparisons and `sign_extend` through the sign bit, the atom
+ *      `x ≥ 2^(n−1)`. What is not linear goes through the bits of an operand,
+ *      each a Boolean the SAT solver decides, the term being the weighted sum
+ *      of its bits: `bvand`, `bvor` and `bvxor` bit by bit, a product of two
+ *      unknowns as shift-and-add over the bits of one, a shift by an unknown
+ *      amount as a barrel shifter over the amount's bits, a division by an
+ *      unknown as `a = b × q + r` with that product. Every operation of the
+ *      theory is lowered: only a wrong number of arguments is rejected.
  */
 object Lowering:
   def apply(script: s2.Script): Script = Script(Lowerer().commands(script.commands))
+
+  /** A use of a rule that mints symbols (or, for `range`, asserts a fact on a
+   *  term), as the lowering records it with proofs on ([[Lowerer.tracing]]):
+   *  `key` is what the lowering memoizes the use by, `args` what the rule's
+   *  defining assertions are made of when the key does not say it all, and
+   *  `symbols` the fresh constants, in the order the rule declares them.
+   *  [[LoweringCheck]] replays the lowering against these.
+   */
+  final case class Intro(kind: String, key: List[Any], args: List[Any], symbols: List[String])
 
 /** One lowering: the declared sorts, the macros, the fresh constants of the
  *  assertion being lowered and their defining assertions.
  */
 private final class Lowerer:
   private enum Value: // a `let`-bound value
-    case T(term: Term, sort: Sort)
+    case T(term: Term, sort: s2.Sort)
     case F(formula: Formula)
 
   private type Env = Map[String, Value]
 
-  private val functions = HashMap.empty[String, Sort] // declared symbols, with their whole function sort
-  private val macros = HashMap.empty[String, (List[(String, Sort)], Sort, s2.Term | s2.Formula)]
+  private val functions = HashMap.empty[String, s2.Sort] // declared symbols, with their whole function sort
+  private val macros = HashMap.empty[String, (List[(String, s2.Sort)], s2.Sort, s2.Term | s2.Formula)]
 
   // A declaration or a definition goes with its level's `pop`, unless `:global-declarations` is true
   // (issue 40): one list of undos per open level, as the parser keeps.
@@ -62,29 +77,48 @@ private final class Lowerer:
       val previous = map.get(key)
       scopes.last += (() => previous.fold(map -= key)(v => map(key) = v))
 
-  private var fresh = 0
-  val minted = scala.collection.mutable.HashSet.empty[String] // the names of the lowering's own, a test for the session
+  /** With proofs: each fresh symbol is recorded in [[intros]] with the rule
+   *  that mints it, for [[LoweringCheck]].
+   */
+  var tracing = false
+  val intros = ArrayBuffer.empty[Lowering.Intro]
+  private inline def trace(
+      inline kind: String,
+      inline key: List[Any],
+      inline symbols: List[Term],
+      inline args: List[Any] = Nil
+  ): Unit =
+    if tracing then intros += Lowering.Intro(kind, key, args, symbols.map { case Const(n) => n; case t => t.toString })
 
-  /** A name of the lowering's own, `prefix!N`: past the script's symbols, so
-   *  that a script's `bit!1` is never taken for the lowering's, and remembered,
-   *  so that a later declaration of it is refused rather than merged with it
-   *  (issue 21).
+  private var fresh = 0
+
+  /** Whether a name is one of the lowering's own (or the solver's): a test for
+   *  the session.
+   */
+  def minted(name: String): Boolean = Names.isOurs(name)
+
+  /** A name of the lowering's own, `.prefix!N` ([[Names]]): no script symbol is
+   *  one.
    */
   private def freshName(prefix: String): String =
     fresh += 1
-    while functions.contains(s"$prefix!$fresh") || macros.contains(s"$prefix!$fresh") do fresh += 1
-    val name = s"$prefix!$fresh"
-    minted += name
-    name
+    Names.minted(prefix, fresh)
 
-  /** Refuses a script's symbol that is one of the lowering's, or that the
-   *  solver would take for a store by its prefix.
+  /** Refuses a script's declaration of a symbol that SMT-LIB reserves for the
+   *  solver, and VIK takes for its own ([[Names]]): one starting with `.`. A
+   *  `let` may bind such a name, which it does not declare.
    */
   private def reserve(name: String): Unit =
-    if minted(name) || name.startsWith("store!") then
-      throw s2.Smt2Error(s"$name: a name the lowering uses; pick another")
-  private val introduced = ArrayBuffer.empty[(String, String)] // fresh constants, declared before the assertion
-  private val definitions = ArrayBuffer.empty[Formula] // the assertions defining them
+    if Names.isOurs(name) then
+      throw s2.Smt2Error(s"$name: SMT-LIB reserves the symbols starting with `.` for the solver")
+  // The fresh constants and the assertions defining them, which go out before the assertion they were made
+  // for, in the order they were made: each constant is declared right before its definitions. The solver
+  // meets a bit-vector constant's range at its declaration, and the search follows the order it meets things in.
+  // `auxiliary`: a constant that is a bit of a term (see bits), whose atoms the search decides last.
+  private val pending = ArrayBuffer.empty[Command]
+  private def introduce(name: String, sort: Sort, auxiliary: Boolean = false): Unit =
+    pending += Command.DeclareFun(name, Nil, sort, auxiliary)
+  private def define(definition: Formula): Unit = pending += Command.Assert(definition)
 
   /** What the lowering minted, by what it was minted for. An entry stands for
    *  constants whose defining assertions went out at its level, and that
@@ -111,8 +145,6 @@ private final class Lowerer:
     def update(key: K, value: V): Unit = getOrElseUpdate(key, value)
     def clear(): Unit = entries.clear()
 
-  private val rangedApplications = Memo[Term, Unit]() // bit-vector applications whose range is asserted
-
   /** The lowering of a bit-vector operation, once per level: the second
    *  occurrence of `bvmul 4 (bvadd 1 x)` in an assertion gets the constants of
    *  the first, not fresh ones defined the same way. Two chains of fresh
@@ -131,7 +163,7 @@ private final class Lowerer:
   private def clearMemos(): Unit =
     rationals.clear()
     rationalProducts.clear()
-    rangedApplications.clear()
+    floors.clear()
     loweredOperations.clear()
     loweredDivisions.clear()
     loweredSignedDivisions.clear()
@@ -139,6 +171,15 @@ private final class Lowerer:
     bitConstants.clear()
 
   def commands(cs: List[s2.Command]): List[Command] = cs.flatMap(command)
+
+  /** Forgets what a command the lowering refused part-way minted: its pending
+   *  declarations and definitions, its intros, and the memos that may point to
+   *  them.
+   */
+  def discard(): Unit =
+    pending.clear()
+    intros.clear()
+    clearMemos()
 
   /** The value of a surface term or formula under `model`, as SMT-LIB writes it
    *  at the term's sort. Every construct is computed here from the model's
@@ -152,7 +193,8 @@ private final class Lowerer:
     case s2.Term.Const(name) if functions.get(name).flatMap(_.arrow).exists(_._1.nonEmpty) =>
       // A function symbol: its graph as a lambda, as cvc5 answers (issue 50).
       val Some((argSorts, result)) = functions(name).arrow: @unchecked
-      val f = model.functions.getOrElse(name, Model.Function(argSorts.map(_.text), result.text, Nil, Const("@default")))
+      val f =
+        model.functions.getOrElse(name, Model.Function(argSorts.map(lowered), lowered(result), Nil, Const("@default")))
       val (params, body) = graph(f, argSorts, result)
       s"(lambda ($params) $body)"
     case t: s2.Term => written(eval(t, model, Scope.empty), sortOf(t, Map.empty))
@@ -161,7 +203,7 @@ private final class Lowerer:
    *  parameters' declarations and the body — a model's `define-fun`, a
    *  `get-value`'s `lambda`.
    */
-  def graph(f: Model.Function, argSorts: List[Sort], result: Sort): (String, String) =
+  def graph(f: Model.Function, argSorts: List[s2.Sort], result: s2.Sort): (String, String) =
     val params = argSorts.zipWithIndex.map((s, i) => s"(x!$i ${s.text})").mkString(" ")
     val body = f.rows.foldRight(written(f.default, result)) { case ((args, r), els) =>
       val cond = args.zip(argSorts).zipWithIndex.map { case ((a, s), i) => s"(= x!$i ${written(a, s)})" } match
@@ -175,8 +217,8 @@ private final class Lowerer:
    *  their values, and their sorts for [[sortOf]].
    */
   private final case class Scope(values: Map[String, Term], sorts: Env):
-    def bound(name: String, value: Term, sort: Sort): Scope =
-      val typed = if sort == Sort.Bool then Value.F(True) else Value.T(Const(name), sort)
+    def bound(name: String, value: Term, sort: s2.Sort): Scope =
+      val typed = if sort == s2.Sort.Bool then Value.F(True) else Value.T(Const(name), sort)
       Scope(values + (name -> value), sorts + (name -> typed))
   private object Scope:
     val empty: Scope = Scope(Map.empty, Map.empty)
@@ -216,7 +258,7 @@ private final class Lowerer:
     case s2.Term.BvApp(op, args) =>
       val widths = args.map(a =>
         sortOf(a, scope.sorts) match
-          case Sort.BitVec(w) => w
+          case s2.Sort.BitVec(w) => w
           case _ => 0 // the integer of `int_to_bv`
       )
       Num(bitVector(op, args.map(a => integer(eval(a, model, scope))), widths))
@@ -236,7 +278,7 @@ private final class Lowerer:
     bindings.foldLeft(scope) { case (inner, (name, value)) =>
       value match
         case t: s2.Term => inner.bound(name, eval(t, model, scope), sortOf(t, scope.sorts))
-        case f: s2.Formula => inner.bound(name, eval(f, model, scope), Sort.Bool)
+        case f: s2.Formula => inner.bound(name, eval(f, model, scope), s2.Sort.Bool)
     }
 
   private def truth(f: s2.Formula, model: Model, scope: Scope): Boolean = f match
@@ -252,10 +294,10 @@ private final class Lowerer:
       values.forall(_ == values.head)
     case s2.Formula.Eq(as) =>
       val values = as.map(eval(_, model, scope))
-      values.zip(values.tail).forall(Model.same)
+      values.zip(values.tail).forall(model.same)
     case s2.Formula.Distinct(as) =>
       val values = as.map(eval(_, model, scope))
-      values.zipWithIndex.forall((a, i) => values.drop(i + 1).forall(b => !Model.same(a, b)))
+      values.zipWithIndex.forall((a, i) => values.drop(i + 1).forall(b => !model.same(a, b)))
     case s2.Formula.Cmp(op, as) =>
       val values = as.map(a => rational(eval(a, model, scope)))
       values.zip(values.tail).forall((a, b) =>
@@ -379,106 +421,90 @@ private final class Lowerer:
    *  decimal, an array as its stores over a constant array of the script's
    *  sort, a constructor's arguments at its fields' sorts (issue 47).
    */
-  def written(value: Term, sort: Sort): String = (value, sort) match
-    case (Num(v), Sort.BitVec(w)) => s2.sexpr.SExpr.SBits(v.mod(modulus(w)), w, hexadecimal = false).toString
-    case (Num(v), Sort.Int) => s2.Printer.print(s2.Term.Numeral(v))
+  def written(value: Term, sort: s2.Sort): String = (value, sort) match
+    case (Num(v), s2.Sort.BitVec(w)) => s2.sexpr.SExpr.SBits(v.mod(modulus(w)), w, hexadecimal = false).toString
+    case (Num(v), s2.Sort.Int) => s2.Printer.print(s2.Term.Numeral(v))
     // A real as a decimal, `4.0` and `(/ 9.0 2.0)`, as z3 writes one: a numeral is an integer where the
     // logic has both, and a definition `(define-fun e () Real 0)` is a sort mismatch to z3.
-    case (Num(v), Sort.Real) => decimal(v)
-    case (App(Const("/"), List(Num(p), Num(q))), Sort.Real) => s"(/ ${decimal(p)} ${decimal(q)})"
-    case (Bool(f), Sort.Bool) => if f == True then "true" else "false"
-    case (App(Const("store"), List(a, i, v)), Sort.Array(index, element)) =>
+    case (Num(v), s2.Sort.Real) => decimal(v)
+    case (App(Const("/"), List(Num(p), Num(q))), s2.Sort.Real) => s"(/ ${decimal(p)} ${decimal(q)})"
+    case (Bool(f), s2.Sort.Bool) => if f == True then "true" else "false"
+    case (App(Const("store"), List(a, i, v)), s2.Sort.Array(index, element)) =>
       s"(store ${written(a, sort)} ${written(i, index)} ${written(v, element)})"
-    case (App(Const(name), List(d)), Sort.Array(_, element)) if name.startsWith("(as const ") =>
+    case (App(Const(name), List(d)), s2.Sort.Array(_, element)) if name.startsWith("(as const ") =>
       s"((as const ${sort.text}) ${written(d, element)})"
-    case (App(Const(c), args), Sort.Named(_)) if functions.get(c).flatMap(_.arrow).exists(_._1.length == args.length) =>
+    case (App(Const(c), args), s2.Sort.Named(_))
+        if functions.get(c).flatMap(_.arrow).exists(_._1.length == args.length) =>
       val fields = functions(c).arrow.get._1
-      s"(${Printer.symbol(c)} ${args.zip(fields).map(written).mkString(" ")})"
-    case (Const(c), _) => Printer.symbol(c) // a nullary constructor, an abstract element
+      s"(${constructor(c, sort)} ${args.zip(fields).map(written).mkString(" ")})"
+    case (Const(c), _) => constructor(c, sort) // a nullary constructor, an abstract element
     case _ => Printer.print(value)
+
+  /** A constructor of a value of the sort `sort`, as the script names it. The
+   *  constructors of an instance `(List Int)` of a parametric datatype have
+   *  names of the parser's, `cons@Int` and `nil@Int`, which no solver reads
+   *  back (issue 142): they are written `(as cons (List Int))`, as cvc5 writes
+   *  them and as z3 reads them too. The parser's name is the constructor's,
+   *  then the sort's arguments with `@` before each, where the sort has a
+   *  space.
+   */
+  private def constructor(c: String, sort: s2.Sort): String = sort match
+    case s2.Sort.Named(text) if text.startsWith("(") && functions.get(c).exists(f => f.arrow.fold(f)(_._2) == sort) =>
+      val arguments = text.drop(1).dropRight(1).dropWhile(_ != ' ') // ` Int`: as long as `@Int`
+      s"(as ${Printer.symbol(c.dropRight(arguments.length))} $text)"
+    case _ => Printer.symbol(c)
 
   private def decimal(v: BigInt): String = if v.signum < 0 then s"(- ${-v}.0)" else s"$v.0"
 
   /** The sort the script declared `name` at, for the model's text; none for a
    *  name the script never declared, the lowering's own among them.
    */
-  def declaredSort(name: String): Option[Sort] = if minted(name) then None else functions.get(name)
+  def declaredSort(name: String): Option[s2.Sort] = if minted(name) then None else functions.get(name)
 
-  /** A sort as the solver writes it: a string, arrays as function sorts. */
-  /** What a declaration of `name` at `sort` asserts about it, beyond the
-   *  declaration itself: a bit-vector constant is an integer of its range, and
-   *  nothing else says so. Said at the declaration and again after a
-   *  `reset-assertions`, which drops the assertions but keeps the declarations
-   *  — one list, so that a second kind of fact is not forgotten in one of the
-   *  two places.
+  /** A sort of the script as the solver knows it ([[Sort]]). An array is the
+   *  function of its index to its elements, which a `select` applies: an array
+   *  field is so of the sort its stores and its array constants have, and the
+   *  array lemmas pair a read with the stores of its array's sort. A bit-vector
+   *  sort is the range of the integers its terms are lowered to: the solver
+   *  gives the range to every term of the sort, the ones it makes itself as
+   *  much as the script's (`Encoder.assertSorts`).
    */
-  private def facts(name: String, sort: Sort): List[Command] = sort match
-    case Sort.BitVec(w) => List(Command.Assert(range(Const(name), w)))
-    case _ => Nil
-
-  /** A sort as the lowered script declares it: a bit-vector is an `Int`, in a
-   *  field, an argument, a result or an array as much as in a constant — the
-   *  solver ties a selector to its constructor's argument by the field's sort,
-   *  and every bit-vector term is an integer to it.
-   */
-  private def lowered(s: Sort): Sort = s match
-    case Sort.BitVec(_) => Sort.Int
-    case Sort.Fun(args, result) => Sort.Fun(args.map(lowered), lowered(result))
-    // An array field is of the function sort its stores and its array constants have ([[sortString]]): the
-    // array lemmas pair a read with the stores of its array's sort, and a field left as `(Array I E)` was
-    // of no store's sort, so a read through a selector got no read-over-write lemma and the search
-    // answered `sat` on an unsatisfiable script.
-    case Sort.Array(index, element) =>
-      val i = index match
-        case Sort.BitVec(_) => index // as [[indexString]] keeps it
-        case other => lowered(other)
-      Sort.fun(List(i), lowered(element))
-    case other => other
-
-  private def sortString(s: Sort): String = s match
-    case Sort.BitVec(_) => "Int"
-    case Sort.Fun(args, result) => s2.Sorts.function(args.map(sortString), sortString(result))
-    case Sort.Array(index, element) => s2.Sorts.function(List(indexString(index)), sortString(element))
-    case other => other.text
-
-  /** An index sort keeps a bit-vector's text, `(-> (_ BitVec 8) Int)`: the
-   *  index terms are integers either way, and the width is what ranges the
-   *  witness of two such arrays asserted different (issue 20).
-   */
-  private def indexString(s: Sort): String = s match
-    case Sort.BitVec(_) => s.text
-    case other => sortString(other)
+  private def lowered(s: s2.Sort): Sort = s match
+    case s2.Sort.Bool => Sort.Bool
+    case s2.Sort.Int => Sort.Int
+    case s2.Sort.Real => Sort.Real
+    case s2.Sort.BitVec(width) => Sort.IntRange(0, modulus(width) - 1)
+    case s2.Sort.Named(name) => Sort.Named(name)
+    case s2.Sort.Fun(args, result) => Sort.fun(args.map(lowered), lowered(result))
+    case s2.Sort.Array(index, element) => Sort.fun(List(lowered(index)), lowered(element))
 
   private def command(c: s2.Command): List[Command] = c match
     // The lowered script is in the corresponding integer logic.
     case s2.Command.SetLogic(logic) => List(Command.SetLogic(logic.replace("BV", "LIA")))
     case s2.Command.SetInfo(key, value) => List(Command.SetInfo(key, value))
     case s2.Command.DeclareSort(name, arity) => List(Command.DeclareSort(name, arity))
-    case s2.Command.DeclareFun(name, Nil, Sort.BitVec(w)) =>
-      reserve(name)
-      undoable(functions, name)
-      functions(name) = Sort.BitVec(w)
-      Command.DeclareFun(name, Nil, "Int") +: facts(name, Sort.BitVec(w))
     case s2.Command.DeclareFun(name, argSorts, sort) =>
       reserve(name)
       undoable(functions, name)
-      functions(name) = Sort.fun(argSorts, sort)
+      functions(name) = s2.Sort.fun(argSorts, sort)
       // An array constant is declared as a constant of its function sort — `(declare-fun a () (-> I E))` —
       // not flattened into a function symbol: the solver applies it either way, and the model knows an
       // array from a function by that.
-      List(Command.DeclareFun(name, argSorts.map(sortString), sortString(sort)))
+      List(Command.DeclareFun(name, argSorts.map(lowered), lowered(sort)))
     case s2.Command.DeclareDatatypes(datatypes) =>
       for datatype <- datatypes; constructor <- datatype.constructors do
-        val d = Sort.Named(datatype.name)
+        val d = s2.Sort.Named(datatype.name)
+        reserve(constructor.name)
         undoable(functions, constructor.name)
-        functions(constructor.name) = Sort.fun(constructor.selectors.map(_._2), d)
+        functions(constructor.name) = s2.Sort.fun(constructor.selectors.map(_._2), d)
         undoable(functions, constructor.tester)
-        functions(constructor.tester) = Sort.fun(List(d), Sort.Bool)
+        functions(constructor.tester) = s2.Sort.fun(List(d), s2.Sort.Bool)
         for (selector, s) <- constructor.selectors do
+          reserve(selector)
           undoable(functions, selector)
-          functions(selector) = Sort.fun(List(d), s)
+          functions(selector) = s2.Sort.fun(List(d), s)
       List(Command.DeclareDatatypes(datatypes.map(d =>
-        d.copy(constructors = d.constructors.map(c => c.copy(selectors = c.selectors.map((n, s) => (n, lowered(s))))))
+        Datatype(d.name, d.constructors.map(c => Constructor(c.name, c.selectors.map((n, s) => (n, lowered(s))))))
       )))
     case s2.Command.DefineFun(name, params, sort, body) =>
       reserve(name)
@@ -495,13 +521,15 @@ private final class Lowerer:
       // What a command that failed halfway minted goes out before the level opens: its entries are below it.
       flush(Command.Push(levels))
     case s2.Command.Pop(levels) =>
-      for _ <- 1 to (levels min scopes.length) do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
+      // More levels than are open: the session refuses the `pop` whole (issue 178), and nothing is undone.
+      if levels <= scopes.length then
+        for _ <- 1 to levels do scopes.remove(scopes.length - 1).reverseIterator.foreach(_())
       List(Command.Pop(levels))
     case s2.Command.ResetAssertions =>
+      // The levels go, and the declarations made in them stay, as the session keeps them (issue 178).
+      scopes.clear()
       clearMemos()
-      // What a declaration says is asserted, and `reset-assertions` drops the assertions: said again
-      // here, or a bit-vector constant would be an integer of any size (a wrong `sat`, fixed 2026-09-04).
-      Command.ResetAssertions +: functions.toList.sortBy(_._1).flatMap(facts)
+      List(Command.ResetAssertions)
     case s2.Command.Reset =>
       scopes.clear()
       globalDeclarations = false
@@ -524,13 +552,12 @@ private final class Lowerer:
           ): Formula | Term
         )
       )
-      val defined = definitions.toList
-      // The symbols minted here are declared for good: a `store!N` stays in `storeSymbols`, and a later
+      val defined = pending.toList.collect { case Command.Assert(definition) => definition }
+      // The symbols minted here are declared for good: a `.store!N` stays in `storeSymbols`, and a later
       // assertion that reuses it needs the solver to know it (issue 16). Their definitions cannot be
       // asserted after a check and go with the command instead.
-      val declared = introduced.toList.map((name, sort) => Command.DeclareFun(name, Nil, sort))
-      introduced.clear()
-      definitions.clear()
+      val declared = pending.toList.collect { case declaration: Command.DeclareFun => declaration }
+      pending.clear()
       clearMemos() // a constant minted here has no definition: later uses must not find it
       declared :+ Command.GetValue(lowered, defined)
     case s2.Command.GetUnsatCore => List(Command.GetUnsatCore)
@@ -542,29 +569,29 @@ private final class Lowerer:
     case s2.Command.GetInfo(key) => List(Command.GetInfo(key))
     case s2.Command.Other(sexpr) => List(Command.Other(sexpr))
 
-  /** The introduced declarations and defining assertions, then the command. */
+  /** The fresh constants' declarations and their defining assertions, then the
+   *  command.
+   */
   private def flush(command: Command): List[Command] =
-    val out = introduced.toList.map((name, sort) => Command.DeclareFun(name, Nil, sort)) ++
-      definitions.toList.map(Command.Assert(_)) :+ command
-    introduced.clear()
-    definitions.clear()
+    val out = pending.toList :+ command
+    pending.clear()
     out
 
   /** The sort of a surface term, for the sort-directed encodings: which `=` a
    *  chain means, the widths of bit-vectors, what a `select` returns.
    */
-  private def sortOf(t: s2.Term, env: Env): Sort = t match
+  private def sortOf(t: s2.Term, env: Env): s2.Sort = t match
     case s2.Term.Const(name) =>
       env.get(name) match
         case Some(Value.T(_, sort)) => sort
-        case Some(Value.F(_)) => Sort.Bool
+        case Some(Value.F(_)) => s2.Sort.Bool
         case None =>
           functions.get(name).orElse(macros.get(name).map(_._2)).getOrElse(
             throw s2.Smt2Error(s"unknown symbol $name")
           )
-    case s2.Term.Numeral(_) => Sort.Int
-    case s2.Term.Decimal(_, _) => Sort.Real
-    case s2.Term.Bits(_, width) => Sort.BitVec(width)
+    case s2.Term.Numeral(_) => s2.Sort.Int
+    case s2.Term.Decimal(_, _) => s2.Sort.Real
+    case s2.Term.Bits(_, width) => s2.Sort.BitVec(width)
     case s2.Term.App(s2.Term.Const(name), args) if macros.contains(name) => macros(name)._2
     case s2.Term.App(fun, args) =>
       sortOf(fun, env).applied(args.length).getOrElse(
@@ -572,29 +599,29 @@ private final class Lowerer:
       )
     case s2.Term.ArithApp(op, args) =>
       op match
-        case ArithOp.Div | ArithOp.ToReal => Sort.Real
-        case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs | ArithOp.ToInt => Sort.Int
-        case _ => if args.exists(a => sortOf(a, env) == Sort.Real) then Sort.Real else Sort.Int
+        case ArithOp.Div | ArithOp.ToReal => s2.Sort.Real
+        case ArithOp.IntDiv | ArithOp.Mod | ArithOp.Abs | ArithOp.ToInt => s2.Sort.Int
+        case _ => if args.exists(a => sortOf(a, env) == s2.Sort.Real) then s2.Sort.Real else s2.Sort.Int
     case s2.Term.BvApp(op, args) =>
       op match
-        case BvOp.UbvToInt | BvOp.SbvToInt => Sort.Int
-        case BvOp.IntToBv(n) => Sort.BitVec(n)
-        case BvOp.Extract(i, j) => Sort.BitVec(i - j + 1)
-        case BvOp.ZeroExtend(k) => Sort.BitVec(width(args.head, env) + k)
-        case BvOp.SignExtend(k) => Sort.BitVec(width(args.head, env) + k)
-        case BvOp.Repeat(k) => Sort.BitVec(width(args.head, env) * k)
-        case BvOp.Concat => Sort.BitVec(args.map(width(_, env)).sum)
-        case BvOp.Comp => Sort.BitVec(1)
-        case _ => Sort.BitVec(width(args.head, env))
+        case BvOp.UbvToInt | BvOp.SbvToInt => s2.Sort.Int
+        case BvOp.IntToBv(n) => s2.Sort.BitVec(n)
+        case BvOp.Extract(i, j) => s2.Sort.BitVec(i - j + 1)
+        case BvOp.ZeroExtend(k) => s2.Sort.BitVec(width(args.head, env) + k)
+        case BvOp.SignExtend(k) => s2.Sort.BitVec(width(args.head, env) + k)
+        case BvOp.Repeat(k) => s2.Sort.BitVec(width(args.head, env) * k)
+        case BvOp.Concat => s2.Sort.BitVec(args.map(width(_, env)).sum)
+        case BvOp.Comp => s2.Sort.BitVec(1)
+        case _ => s2.Sort.BitVec(width(args.head, env))
     case s2.Term.Select(array, _) =>
       sortOf(array, env) match
-        case Sort.Array(_, element) => element
+        case s2.Sort.Array(_, element) => element
         case s => s.applied(1).getOrElse(throw s2.Smt2Error(s"select on $s"))
     case s2.Term.Store(array, _, _) => sortOf(array, env)
     case s2.Term.Ite(_, thn, els) =>
       // Real when either branch is: a numeral beside a real term is a real (issue 15).
       val t = sortOf(thn, env)
-      if t == Sort.Int && sortOf(els, env) == Sort.Real then Sort.Real else t
+      if t == s2.Sort.Int && sortOf(els, env) == s2.Sort.Real then s2.Sort.Real else t
     case s2.Term.Let(bindings, body) =>
       sortOf(
         body,
@@ -605,25 +632,25 @@ private final class Lowerer:
               case _: s2.Formula => Value.F(True))
         )
       )
-    case s2.Term.Bool(_) => Sort.Bool
+    case s2.Term.Bool(_) => s2.Sort.Bool
 
   private def width(t: s2.Term, env: Env): Int = sortOf(t, env) match
-    case Sort.BitVec(w) => w
+    case s2.Sort.BitVec(w) => w
     case s => throw s2.Smt2Error(s"a bit-vector was expected, not $s")
 
   /** Whether terms of `sort` are numbers after lowering: where `=` and
    *  `distinct` mean bounds.
    */
-  private def arithmetic(sort: Sort): Boolean = sort match
-    case Sort.Int | Sort.Real | Sort.BitVec(_) => true
+  private def arithmetic(sort: s2.Sort): Boolean = sort match
+    case s2.Sort.Int | s2.Sort.Real | s2.Sort.BitVec(_) => true
     case _ => false
 
   /** Equality of two lowered terms of `sort`: bit by bit when both sides' bits
    *  are known (a bitwise result, a literal), so that a bit-level fact stays
    *  with the SAT solver; otherwise the solver's.
    */
-  private def equal(sort: Sort, lhs: Term, rhs: Term): Formula = sort match
-    case Sort.BitVec(w) if bitwiseEquality(List(lhs, rhs), w) =>
+  private def equal(sort: s2.Sort, lhs: Term, rhs: Term): Formula = sort match
+    case s2.Sort.BitVec(w) if bitwiseEquality(List(lhs, rhs), w) =>
       And(bits(lhs, w).zip(bits(rhs, w)).map(same).toList)
     case _ => if arithmetic(sort) then IntEq(lhs, rhs) else Eq(lhs, rhs)
 
@@ -661,15 +688,15 @@ private final class Lowerer:
       val sort = sortOf(args.head, env)
       val ts = args.map(term(_, env))
       sort match
-        case Sort.BitVec(w) if bitwiseEquality(ts, w) =>
+        case s2.Sort.BitVec(w) if bitwiseEquality(ts, w) =>
           chain(for (a, i) <- ts.zipWithIndex; b <- ts.drop(i + 1) yield Not(equal(sort, a, b)))
         case _ =>
           // A numeral among reals says `Int` on its own, so any real side makes the whole `distinct` one.
           if !arithmetic(sort) then Distinct(ts)
-          else if args.exists(a => sortOf(a, env) == Sort.Real) then RealDistinct(ts)
+          else if args.exists(a => sortOf(a, env) == s2.Sort.Real) then RealDistinct(ts)
           else IntDistinct(ts)
     case s2.Formula.Cmp(op, args) =>
-      val real = args.exists(a => sortOf(a, env) == Sort.Real) // any side: numerals alone say Int
+      val real = args.exists(a => sortOf(a, env) == s2.Sort.Real) // any side: numerals alone say Int
       val ts = args.map(term(_, env))
       val compare: (Term, Term) => Formula = op match
         case s2.CmpOp.Le => Le(_, _)
@@ -696,7 +723,7 @@ private final class Lowerer:
         (value match
           case t: s2.Term =>
             val sort = sortOf(t, env)
-            if sort == Sort.Bool then Value.F(Formula.pred(term(t, env))) else Value.T(term(t, env), sort)
+            if sort == s2.Sort.Bool then Value.F(Formula.pred(term(t, env))) else Value.T(term(t, env), sort)
           case f: s2.Formula => Value.F(formula(f, env)))
     )
 
@@ -720,12 +747,11 @@ private final class Lowerer:
     case s2.Term.Decimal(unscaled, scale) => rationalConst(unscaled, BigInt(10).pow(scale))
     case s2.Term.Bits(value, _) => Num(value)
     case s2.Term.App(s2.Term.Const(name), args) if macros.contains(name) => expand(name, args, env)
-    case s2.Term.App(fun, args) => ranged(App(term(fun, env), args.map(term(_, env))), sortOf(t, env))
+    case s2.Term.App(fun, args) => App(term(fun, env), args.map(term(_, env)))
     case s2.Term.ArithApp(op, args) => arith(op, args, env)
     case s2.Term.BvApp(op, args) => bv(op, args, env)
     case s2.Term.Select(array, index) =>
-      val a = term(array, env)
-      ranged(App(a, List(term(index, env))), sortOf(t, env))
+      App(term(array, env), List(term(index, env)))
     case s2.Term.Store(array, index, value) =>
       App(storeSymbol(sortOf(array, env)), List(term(array, env), term(index, env), term(value, env)))
     case s2.Term.Ite(cond, thn, els) =>
@@ -738,14 +764,11 @@ private final class Lowerer:
         ("ite", List(Term.boolean(c), t, e), Nil), {
           val name = freshName("ite")
           val k = Const(name)
-          sort match
-            case Sort.BitVec(w) => // introduced as the lowering of its declaration would
-              introduced += ((name, "Int"))
-              definitions += range(k, w)
-            case _ => introduced += ((name, sortString(sort)))
+          introduce(name, lowered(sort))
           functions(name) = sort
-          definitions += Implies(c, equal(sort, k, t))
-          definitions += Implies(Not(c), equal(sort, k, e))
+          define(Implies(c, equal(sort, k, t)))
+          define(Implies(Not(c), equal(sort, k, e)))
+          trace("ite", List(Term.boolean(c), t, e), List(k), List(sort))
           k
         }
       )
@@ -763,7 +786,7 @@ private final class Lowerer:
     val inner = params.zip(args).foldLeft(Map.empty: Env) { case (e, ((p, s), a)) =>
       e +
         (p -> (
-          if s == Sort.Bool then Value.F(Formula.pred(term(a, env)))
+          if s == s2.Sort.Bool then Value.F(Formula.pred(term(a, env)))
           else Value.T(term(a, env), s)
         ))
     }
@@ -816,14 +839,23 @@ private final class Lowerer:
    *  determined uniquely by `r`, so the definition is sound under both
    *  polarities.
    */
-  private def floor(r: Term): Term =
-    val name = freshName("floor")
-    introduced += ((name, "Int"))
-    functions(name) = Sort.Int
-    val k = Const(name)
-    definitions += Le(k, r)
-    definitions += Less(r, Term.linear(List((BigInt(1), k)), 1))
-    k
+  private def floor(r: Term): Term = floors.getOrElseUpdate(
+    r, {
+      val name = freshName("floor")
+      introduce(name, Sort.Int)
+      functions(name) = s2.Sort.Int
+      val k = Const(name)
+      define(Le(k, r))
+      define(Less(r, Term.linear(List((BigInt(1), k)), 1)))
+      trace("floor", List(r), List(k))
+      k
+    }
+  )
+
+  /** One floor per term: the proof's lowering check replays each rule once per
+   *  key, and the search is then the same with proofs as without.
+   */
+  private val floors = Memo[Term, Term]()
 
   private def floorDiv(p: BigInt, q: BigInt): BigInt =
     val (d, r) = p /% q
@@ -861,11 +893,12 @@ private final class Lowerer:
       rationals.getOrElseUpdate(
         (p, q), {
           val name = freshName("rat")
-          introduced += ((name, "Real"))
-          functions(name) = Sort.Real
+          introduce(name, Sort.Real)
+          functions(name) = s2.Sort.Real
           val k = Const(name)
-          definitions += IntEq(Term.linear(List((q, k))), Num(p))
+          define(IntEq(Term.linear(List((q, k))), Num(p)))
           rationalValues(k) = (p, q)
+          trace("rat", List(p, q), List(k))
           k
         }
       )
@@ -882,33 +915,35 @@ private final class Lowerer:
       rationalProducts.getOrElseUpdate(
         (p, q, t), {
           val name = freshName("rat")
-          introduced += ((name, "Real"))
-          functions(name) = Sort.Real
+          introduce(name, Sort.Real)
+          functions(name) = s2.Sort.Real
           val k = Const(name)
-          definitions += IntEq(Term.linear(List((q, k))), Term.linear(List((p, t))))
+          define(IntEq(Term.linear(List((q, k))), Term.linear(List((p, t)))))
+          trace("ratmul", List(p, q, t), List(k))
           k
         }
       )
 
   private val rationalProducts = Memo[(BigInt, BigInt, Term), Term]()
 
-  /** The `store!N` function symbol for arrays of `sort`, declared on first use:
-   *  `store` is not a function of the tree, each array sort gets its own
+  /** The `.store!N` function symbol for arrays of `sort`, declared on first
+   *  use: `store` is not a function of the tree, each array sort gets its own
    *  uninterpreted symbol, and the solver's array lemmas recognize the name.
    */
-  private val storeSymbols = HashMap.empty[String, String]
+  private val storeSymbols = HashMap.empty[Sort, String]
 
-  private def storeSymbol(arraySort: Sort): Term =
-    val key = sortString(arraySort)
+  private def storeSymbol(arraySort: s2.Sort): Term =
+    val key = lowered(arraySort)
     val name = storeSymbols.getOrElseUpdate(
       key, {
         // The array's function sort, flattened when its elements are arrays: the index is the first
         // parameter, the value sort what the array applied to one index has.
-        val (params, _) = s2.Sorts.arrow(key).getOrElse(throw s2.Smt2Error(s"store on $arraySort"))
+        val (params, _) = key.arrow.getOrElse(throw s2.Smt2Error(s"store on $arraySort"))
         val n = freshName("store")
-        val argSorts = key :: params.head :: List(s2.Sorts.applied(key, 1)) // the array, the index, the value
-        introduced += ((n, s2.Sorts.function(argSorts, key)))
-        functions(n) = Sort.Named(n) // the solver reads the introduced declaration; the name is enough here
+        val argSorts = key :: params.head :: List(key.after(1).get) // the array, the index, the value
+        introduce(n, Sort.fun(argSorts, key))
+        functions(n) = s2.Sort.Named(n) // the solver reads the introduced declaration; the name is enough here
+        trace("store", List(key), List(Const(n)))
         n
       }
     )
@@ -917,29 +952,15 @@ private final class Lowerer:
   // Bit-vectors, to linear integer arithmetic.
 
   /** A fresh `Int` constant in `[lo, hi]`, declared and bounded before the
-   *  current assertion.
+   *  current assertion. `aux`: declared auxiliary (see [[Command.DeclareFun]]).
    */
-  private def freshInt(prefix: String, lo: BigInt, hi: BigInt): Term =
+  private def freshInt(prefix: String, lo: BigInt, hi: BigInt, aux: Boolean = false): Term =
     val name = freshName(prefix)
-    introduced += ((name, "Int"))
+    introduce(name, Sort.Int, aux)
     val k = Const(name)
-    definitions += Ge(k, Num(lo))
-    definitions += Le(k, Num(hi))
+    define(Ge(k, Num(lo)))
+    define(Le(k, Num(hi)))
     k
-
-  /** `0 ≤ t < 2^width`. */
-  private def range(t: Term, width: Int): Formula = And(List(Ge(t, Num(0)), Le(t, Num(modulus(width) - 1))))
-
-  /** A bit-vector that comes out of an application — of a function, a selector,
-   *  an array — is an integer the solver knows nothing about: its range is
-   *  asserted at its first use, as a declared constant's is at the declaration,
-   *  once per term at a level: the assertion lives at the level of the use.
-   */
-  private def ranged(t: Term, sort: Sort): Term =
-    sort match
-      case Sort.BitVec(w) => rangedApplications.getOrElseUpdate(t, definitions += range(t, w))
-      case _ => ()
-    t
 
   private def modulus(width: Int): BigInt = BigInt(2).pow(width)
 
@@ -1008,7 +1029,7 @@ private final class Lowerer:
       case (BvOp.Comp, a :: b :: Nil) =>
         (a, b) match
           case (Num(u), Num(v)) => Num(if u == v then 1 else 0)
-          case _ => cases("comp", equal(Sort.BitVec(width), a, b), Num(1), Num(0), 0, 1)
+          case _ => cases("comp", equal(s2.Sort.BitVec(width), a, b), Num(1), Num(0), 0, 1)
       case _ => throw s2.Unsupported(s"${op.name} with these arguments is not supported")
     end match
 
@@ -1043,8 +1064,12 @@ private final class Lowerer:
         val q = freshInt("q", 0, m - 1)
         val r = freshInt("r", 0, m - 1)
         val zero = IntEq(b, Num(0))
-        definitions += Implies(zero, And(List(IntEq(q, Num(m - 1)), IntEq(r, a))))
-        definitions += Implies(Not(zero), And(List(IntEq(a, exactProduct(b, q, width) + r), Less(r, b))))
+        define(Implies(zero, And(List(IntEq(q, Num(m - 1)), IntEq(r, a)))))
+        define(Implies(
+          Not(zero),
+          And(List(IntEq(a, exactProduct(b, q, width) + r), Less(r, b)))
+        ))
+        trace("udiv", List(Term.linear(List((BigInt(1), a), (m, b))), m, m), List(q, r), List(a, b, width))
         (q, r)
       }
     )
@@ -1157,11 +1182,12 @@ private final class Lowerer:
    */
   private def bits(t: Term, width: Int): IndexedSeq[Formula] =
     knownBits(t, width).getOrElse {
-      val bs = (0 until width).map(_ => freshInt("bit", 0, 1))
-      definitions += IntEq(t, Term.linear(bs.toList.zipWithIndex.map((b, i) => (modulus(i), b))))
+      val bs = (0 until width).map(_ => freshInt("bit", 0, 1, aux = true))
+      define(IntEq(t, Term.linear(bs.toList.zipWithIndex.map((b, i) => (modulus(i), b)))))
       val fs = bs.map(b => Ge(b, Num(1)))
       for (f, b) <- fs.zip(bs) do bitConstants(f) = b
       loweredBits((t, width)) = fs
+      trace("bits", List(t, width), bs.toList)
       fs
     }
 
@@ -1255,10 +1281,12 @@ private final class Lowerer:
           // rather than an integer unknown `k` with `2^width` as its coefficient, on which the simplex
           // pivots into huge rationals and walks; a wide range of counts stays an unknown.
           if hi - lo < splitCases then
-            definitions += Or((lo to hi).toList.map(k => IntEq(value, r + Num(k * modulus(width)))))
+            define(Or((lo to hi).toList.map(k => IntEq(value, r + Num(k * modulus(width))))))
+            trace("modulo", List(value, width, lo, hi), List(r))
           else
             val k = freshInt("k", lo, hi)
-            definitions += IntEq(value, r + k * modulus(width))
+            define(IntEq(value, r + k * modulus(width)))
+            trace("modulo", List(value, width, lo, hi), List(r, k))
           r
         }
       )
@@ -1283,8 +1311,9 @@ private final class Lowerer:
     loweredOperations.getOrElseUpdate(
       (tag, List(Term.boolean(cond), thn, els), List(lo, hi)), {
         val k = freshInt(tag, lo, hi)
-        definitions += Implies(cond, IntEq(k, thn))
-        definitions += Implies(Not(cond), IntEq(k, els))
+        define(Implies(cond, IntEq(k, thn)))
+        define(Implies(Not(cond), IntEq(k, els)))
+        trace("cases", List(tag, Term.boolean(cond), thn, els, lo, hi), List(k))
         k
       }
     )
@@ -1299,7 +1328,8 @@ private final class Lowerer:
         (value, divisor, quotientMax), {
           val q = freshInt("q", 0, quotientMax)
           val r = freshInt("r", 0, divisor - 1)
-          definitions += IntEq(value, q * divisor + r)
+          define(IntEq(value, q * divisor + r))
+          trace("divide", List(value, divisor, quotientMax), List(q, r))
           (q, r)
         }
       )
@@ -1335,10 +1365,16 @@ private final class Lowerer:
           case BvOp.Srem => modulo(r, width, -1, 0)
           case _ =>
             val differ = if t.signum > 0 then negative(a, width) else Not(negative(a, width)) // the signs differ
-            val z = freshInt("z", 0, 1)
-            definitions += Implies(Not(differ), IntEq(z, Num(0)))
-            definitions += Implies(IntEq(r, Num(0)), IntEq(z, Num(0)))
-            definitions += Implies(And(List(differ, Not(IntEq(r, Num(0))))), IntEq(z, Num(1)))
+            val z = loweredOperations.getOrElseUpdate(
+              ("smodz", List(a), List(c, width)), {
+                val z = freshInt("z", 0, 1)
+                define(Implies(Not(differ), IntEq(z, Num(0))))
+                define(Implies(IntEq(r, Num(0)), IntEq(z, Num(0))))
+                define(Implies(And(List(differ, Not(IntEq(r, Num(0))))), IntEq(z, Num(1))))
+                trace("smodz", List(a, c, width), List(z))
+                z
+              }
+            )
             modulo(r + z * t, width, -1, 0)
 
   /** The signed value `S` of `t` divided by `d > 0`: `S = d × q + r` with
@@ -1352,10 +1388,11 @@ private final class Lowerer:
         val half = modulus(width - 1)
         val q = freshInt("q", -(half / d) - 1, (half - 1) / d)
         val r = freshInt("r", if floor then 0 else -(d - 1), d - 1)
-        definitions += IntEq(signed(t, width), q * d + r)
+        define(IntEq(signed(t, width), q * d + r))
         if !floor then
-          definitions += Implies(negative(t, width), Le(r, Num(0)))
-          definitions += Implies(Not(negative(t, width)), Ge(r, Num(0)))
+          define(Implies(negative(t, width), Le(r, Num(0))))
+          define(Implies(Not(negative(t, width)), Ge(r, Num(0))))
+        trace("sdivide", List(t, width, d, floor), List(q, r))
         (q, r)
       }
     )
@@ -1379,9 +1416,10 @@ private final class Lowerer:
         ("int_to_bv", List(t), List(width)), {
           val r = freshInt("bv", 0, modulus(width) - 1)
           val name = freshName("k")
-          introduced += ((name, "Int"))
+          introduce(name, Sort.Int)
           val k = Const(name)
-          definitions += IntEq(t, r + k * modulus(width))
+          define(IntEq(t, r + k * modulus(width)))
+          trace("int2bv", List(t, width), List(r, k))
           r
         }
       )

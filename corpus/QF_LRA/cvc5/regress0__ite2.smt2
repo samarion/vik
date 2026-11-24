@@ -1,0 +1,7 @@
+; From cvc5: regress0/ite2.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_LRA)
+(set-info :status sat)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(assert (not (= x (ite true y x))))
+(check-sat)

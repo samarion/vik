@@ -1,0 +1,6 @@
+; From cvc5: regress0/parser/constraint.smt2 (modified BSD, LICENSES/cvc5.txt)
+(set-logic QF_UF)
+(set-info :status sat)
+(declare-sort U 0)
+(declare-fun Constraint () U)
+(check-sat)

@@ -77,9 +77,9 @@ class Smt2Test extends munit.FunSuite:
     // The lowering names it: a constant of the branches' sort, defined before its assertion.
     assertEquals(
       Lowering(s).commands.collect {
-        case io.bovel.vik.Command.DeclareFun(n, Nil, "U") if n.startsWith("ite!") => n
+        case io.bovel.vik.Command.DeclareFun(n, Nil, io.bovel.vik.Sort.Named("U"), _) if n.startsWith(".ite!") => n
       },
-      List("ite!1")
+      List(".ite!1")
     )
     assertEquals(Session.run(s), List("unsat"))
 

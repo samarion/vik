@@ -1,0 +1,6 @@
+name = "vik-proofs"
+defaultTargets = ["Vik"]
+
+[[lean_lib]]
+name = "Vik"
+precompileModules = true

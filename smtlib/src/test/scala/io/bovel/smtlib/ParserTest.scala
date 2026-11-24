@@ -169,14 +169,122 @@ class ParserTest extends munit.FunSuite:
       )
     do intercept[Smt2Error](parse(script))
 
+  test("a datatype declares each constructor and each selector once"):
+    // The second `f` replaced the first, so `(f (A 5))` was any integer (issue 146).
+    for script <- List(
+        "(declare-datatype D ((A (f Int)) (B (f Int))))",
+        "(declare-datatype D ((A (f Int) (f Bool))))",
+        "(declare-datatype D ((A) (A (f Int))))",
+        "(declare-datatypes ((D 0) (E 0)) (((A)) ((B (f Int)) (C (f Int)))))",
+        "(declare-datatype D (par (T) ((A (f T)) (B (f T)))))",
+        "(declare-datatypes ((D 1) (E 0)) ((par (T) ((A (f T)))) ((B (g Int)) (C (g Int)))))"
+      )
+    do intercept[Smt2Error](parse(script))
+    val e = intercept[Smt2Error](parse("(declare-datatype D ((A (f Int)) (B (f Int))))"))
+    assertEquals(e.getMessage, "f: a selector declared twice in the datatype D")
+
+  test("a symbol is declared once"):
+    // The second `a` replaced the first: `A` was left with the constructor of `B`, and two of its values
+    // could not differ (issue 230).
+    for script <- List(
+        "(declare-datatype A ((a (f Int))))(declare-datatype B ((a)))",
+        "(declare-datatypes ((A 0) (B 0)) (((a (f Int))) ((a))))",
+        "(declare-datatypes ((D 0) (E 0)) (((A (f Int))) ((B (f Int)))))",
+        "(declare-datatype D ((A (B Int)) (B (A Int))))",
+        "(declare-datatypes ((L 1) (M 1)) ((par (X) ((a (f X)))) (par (Y) ((a)))))",
+        "(declare-datatype L (par (X) ((a (f X)))))(declare-datatype B ((a)))",
+        "(declare-datatype B ((a)))(declare-datatype L (par (X) ((a (f X)))))",
+        "(declare-datatypes ((L 1) (B 0)) ((par (X) ((a (f X)))) ((a))))",
+        "(declare-fun a () Int)(declare-datatype A ((a)))",
+        "(declare-datatype A ((a (f Int))))(declare-fun f (A) Int)",
+        "(declare-datatype A ((a)))(define-fun a () Int 1)",
+        "(define-fun a () Int 1)(declare-datatype A ((a)))",
+        "(declare-fun g () Int)(declare-fun g () Bool)",
+        "(declare-const g Int)(declare-const g Int)",
+        "(declare-fun g () Int)(define-fun g () Int 2)",
+        "(define-fun g () Int 2)(declare-const g Int)",
+        "(define-fun g () Int 1)(define-fun g () Int 2)",
+        // The declarations stay over a `reset-assertions` (issue 178), as in z3.
+        "(declare-const g Int)(reset-assertions)(declare-const g Int)"
+      )
+    do intercept[Smt2Error](parse(script))
+    val e = intercept[Smt2Error](parse("(declare-datatype A ((a (f Int))))(declare-datatype B ((a)))"))
+    assertEquals(e.getMessage, "a: a symbol declared twice")
+    // A popped symbol is free again.
+    parse("(push 1)(declare-datatype A ((a)))(pop 1)(declare-datatype B ((a)))(declare-const x B)")
+    parse("(push 1)(declare-const g Int)(pop 1)(declare-const g Bool)")
+
+  test("a sort is declared once"):
+    // The second `A` replaced the first, and a script with no assertion was unsat (issue 176).
+    val par = "(par (T) ((a (x T))))"
+    for script <- List(
+        "(declare-datatypes ((A 0) (A 0)) (((a)) ((b))))",
+        "(declare-datatype A ((a)))(declare-datatype A ((b)))",
+        "(declare-sort A 0)(declare-datatype A ((a)))",
+        "(declare-datatype A ((a)))(declare-sort A 0)",
+        "(declare-sort A 0)(declare-sort A 1)",
+        "(define-sort A () Int)(declare-datatype A ((a)))",
+        "(declare-sort A 0)(define-sort A () Int)",
+        "(define-sort A () Int)(define-sort A () Bool)",
+        s"(declare-datatypes ((A 1) (A 0)) ($par ((b))))",
+        s"(declare-datatypes ((A 1) (A 1)) ($par (par (T) ((b (y T))))))",
+        s"(declare-datatype A $par)(declare-datatype A ((b)))",
+        s"(declare-datatype A $par)(declare-sort A 0)",
+        s"(declare-sort A 0)(declare-datatype A $par)",
+        // The declarations stay over a `reset-assertions` (issue 178), and their names with them, as in z3.
+        "(declare-datatype A ((a)))(reset-assertions)(declare-datatype A ((b)))"
+      )
+    do intercept[Smt2Error](parse(script))
+    val e = intercept[Smt2Error](parse("(declare-datatypes ((A 0) (A 0)) (((a)) ((b))))"))
+    assertEquals(e.getMessage, "A: a sort declared twice")
+    // A popped name is free again, and so is the name of a theory's sort in a logic without the theory.
+    parse("(push 1)(declare-sort A 0)(pop 1)(declare-datatype A ((a)))")
+    parse("(set-logic QF_UF)(declare-sort Int 0)(declare-const x Int)")
+    // A datatype's parameter may be named like a sort of the script (issue 152).
+    parse("(declare-sort A 0)(declare-datatype L (par (A) ((nil) (cons (hd A) (tl (L A))))))")
+    parse(s"(declare-datatypes ((A 1) (B 0)) ($par ((b (y (A Int))))))(declare-const z B)")
+
+  test("a datatype is well-founded"):
+    // No constructor of these can be applied first: they have no value, and SMT-LIB excludes them (issue 147).
+    val box = "(declare-datatype Box (par (X) ((box (unbox X)))))"
+    for script <- List(
+        "(declare-datatype T ())",
+        "(declare-datatype T ((c (f T))))",
+        "(declare-datatype T ((c (n Int) (f T)) (d (g T))))",
+        "(declare-datatypes ((A 0) (B 0)) (((a (x B))) ((b (y A)))))",
+        "(declare-datatypes ((T 0)) (((c (f (Array Int T))))))",
+        "(declare-datatype T ((c (f (Array T Int)))))",
+        s"$box (declare-datatype T ((c (f (Box T)))))",
+        "(declare-datatypes ((A 0) (B 0) (Box 1)) (((a (x B))) ((b (y A))) (par (X) ((box (unbox X))))))",
+        // A parametric datatype is read where it is instantiated, and refused there.
+        "(declare-datatype L (par (X) ((cons (head X) (tail (L X)))))) (declare-const x (L Int))",
+        s"$box (declare-datatype W (par (X) ((w (u (Box (W X))))))) (declare-const x (W Int))",
+        "(declare-datatype Opt (par (X) ((none) (some (val X)))))" +
+          "(declare-datatype L (par (X) ((cons (head X) (tail (L X))))))" +
+          "(assert (= (as none (Opt (L Int))) (as none (Opt (L Int)))))"
+      )
+    do
+      val e = intercept[Smt2Error](parse(script))
+      assert(e.getMessage.contains("is not well-founded"), e.getMessage)
+    // A value through a later member of the group, through an instance, and under an array.
+    parse("(declare-datatypes ((A 0) (B 0)) (((a (x B))) ((b (y A)) (e))))")
+    parse("""
+      (declare-datatype List (par (X) ((nil) (cons (head X) (tail (List X))))))
+      (declare-datatype Tree ((node (children (List Tree)))))
+      (declare-datatype Rose (par (X) ((rose (label X) (subtrees (List (Rose X)))))))
+      (declare-const r (Rose Tree))
+      """)
+    parse("(declare-datatype T ((c (f (Array Int T))) (leaf)))")
+    parse("(declare-sort U 0) (declare-datatype T ((c (u U) (s String) (b (_ BitVec 8)) (r Real))))")
+
   test("the datatypes a field may mention"):
     parse("""
       (declare-sort U 0) (declare-sort B 1)
       (declare-datatype R ((n) (m (next R))))
-      (declare-datatypes ((A 0) (C 0)) (((a (c C))) ((e) (d (a A)))))
+      (declare-datatypes ((A 0) (C 0)) (((a (c C))) ((e) (d (back A)))))
       (declare-datatypes ((L 1)) ((par (T) ((nil) (cons (head T) (tail (L T)))))))
       (declare-datatype F ((f (l (L F)) (u U) (b (B Int)) (arr (Array Int U)))))
-      (declare-datatypes ((M 1) (N 0)) ((par (T) ((m1 (v T) (o N)))) ((n1 (w (M Int))))))
+      (declare-datatypes ((M 1) (N 0)) ((par (T) ((m1 (v T) (o N)))) ((n0) (n1 (w (M Int))))))
       (declare-datatype Unused ((s (t String))))
       (declare-const x (L Int)) (declare-const y (M Bool)) (declare-const z (B U))
       """)

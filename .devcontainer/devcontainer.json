@@ -37,11 +37,37 @@
     // bench/.venv is the container's own, a volume over the host's: a venv
     // runs only on the Python that made it (the host's is Ubuntu's 3.12, this
     // image's Debian's 3.13). postCreateCommand fills it.
+    //
+    // gh's login, Codex's state and the shell history live in volumes too, so
+    // that a rebuild (a new image, a VS Code update) keeps them; their names
+    // are fixed, not per container, so that they also outlive a change of the
+    // container's id. The Dockerfile makes their directories and points bash
+    // at the shell history's.
+    //
+    // Codex's state (auth.json, config.toml, sessions) is a volume rather than
+    // a bind of the host's ~/.codex, which holds the pid files and sockets of
+    // the host's own Codex daemons: sign in once with `codex login` and stay
+    // signed in across rebuilds.
+    //
+    // ~/scratch is a volume as well, for working files that have to outlive a
+    // rebuild and do not belong in the repository: the scripts and the jars of
+    // a night of benchmarks. /tmp, where Claude's own scratchpad is, starts
+    // empty in a new container. It is a local volume and not a folder of
+    // ~/.claude, which may be on a network file system.
     "mounts": [
         "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
-        "source=vik-bench-venv-${devcontainerId},target=${localWorkspaceFolder}/bench/.venv,type=volume"
+        "source=vik-bench-venv-${devcontainerId},target=${localWorkspaceFolder}/bench/.venv,type=volume",
+        "source=vik-gh-config,target=/home/vscode/.config/gh,type=volume",
+        "source=vik-codex-config,target=/home/vscode/.codex,type=volume",
+        "source=vik-shell-history,target=/home/vscode/.shell-history,type=volume",
+        "source=vik-scratch,target=/home/vscode/scratch,type=volume"
     ],
-    "postCreateCommand": "sudo chown vscode: bench/.venv && python3 -m venv bench/.venv && bench/.venv/bin/pip install -q -r bench/requirements.txt",
+    // The Codex CLI (OpenAI) is a global npm package, next to Claude Code;
+    // `npm install -g @openai/codex@latest` updates it in place. It is
+    // installed here rather than in the Dockerfile because Node.js comes from
+    // the node feature, which is layered on after the Dockerfile; the
+    // feature's global prefix is writable by vscode.
+    "postCreateCommand": "sudo chown vscode: bench/.venv /home/vscode/.config/gh /home/vscode/.codex /home/vscode/.shell-history /home/vscode/scratch && python3 -m venv bench/.venv && bench/.venv/bin/pip install -q -r bench/requirements.txt && npm install -g @openai/codex && codex --version",
     "containerEnv": {
         "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
     },
@@ -54,7 +80,8 @@
         "vscode": {
             "extensions": [
                 "James-Yu.latex-workshop",
-                "mutantdino.resourcemonitor"
+                "mutantdino.resourcemonitor",
+                "openai.chatgpt"
             ]
         }
     }
